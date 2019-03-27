@@ -1,0 +1,10 @@
+[package]
+name = "callgraph_traversal"
+version = "0.1.0"
+authors = ["Steve Fink <sphink@gmail.com>"]
+
+[dependencies]
+petgraph = "*"
+regex = "*"
+rustyline = "*"
+lazy_static = "*"
