@@ -51,18 +51,18 @@ impl Callgraph {
         };
         let idx = cg.graph.add_node(String::from("(dummy node zero)"));
         cg.caller_graph.add_node(idx);
-        return cg;
+        cg
     }
 
     pub fn add_function(&mut self, name : &str) -> NodeIndex {
         let idx = self.graph.add_node(String::from(name));
         self.caller_graph.add_node(idx);
-        return idx;
+        idx
     }
 
     pub fn add_unmangled_name(&mut self, id : usize, unmangled : &str) {
         let func_stem = stem(unmangled);
-        self.stem_table.entry(String::from(func_stem)).or_insert(Vec::new()).push(NodeIndex::new(id));
+        self.stem_table.entry(String::from(func_stem)).or_default().push(NodeIndex::new(id));
         // TODO: Add to the list of names associated with an id.
         if id >= self.alt_names.len() {
             self.alt_names.resize(id + 1, Vec::new());
@@ -77,11 +77,11 @@ impl Callgraph {
 
     pub fn name(&self, idx : NodeIndex, brevity : DescriptionBrevity) -> String {
         match brevity {
-            DescriptionBrevity::Brief => format!("{}", self.graph[idx]),
+            DescriptionBrevity::Brief => self.graph[idx].to_string(),
 
             DescriptionBrevity::Normal => {
                 let alt = &self.alt_names[idx.index()];
-                if alt.len() == 0 {
+                if alt.is_empty() {
                     format!("#{} = {}", idx.index(), self.graph[idx])
                 } else {
                     format!("#{} = {}", idx.index(), alt[0])
@@ -123,18 +123,18 @@ impl Callgraph {
                 results.push(idx);
             }
         }
-        if results.len() > 0 {
+        if ! results.is_empty() {
             return Some(results);
         }
-        return None
+        None
     }
 
     pub fn callees(&self, idx : NodeIndex) -> Neighbors<u32> {
-        return self.graph.neighbors(idx);
+        self.graph.neighbors(idx)
     }
 
     pub fn callers(&self, idx : NodeIndex) -> Vec<NodeIndex> {
-        return self.caller_graph.neighbors(idx).collect();
+        self.caller_graph.neighbors(idx).collect()
     }
 
     pub fn any_route(&self, origin : NodeIndex, goal : NodeIndex, _avoid : Vec<NodeIndex>) -> Option<Vec<NodeIndex>> {
@@ -146,7 +146,7 @@ impl Callgraph {
             return Some(vec![origin]);
         }
 
-        while work.len() > 0 {
+        while ! work.is_empty() {
             let src = work.pop_front().unwrap();
             for dst in self.graph.neighbors(src) {
                 if edges.contains_key(&dst) { continue; }
@@ -165,10 +165,11 @@ impl Callgraph {
         let mut result = vec![goal];
         while result.last().unwrap() != &origin {
             let idx = *result.last().unwrap();
-            result.push(*edges.get(&idx).unwrap());
+            //result.push(*edges.get(&idx).unwrap());
+            result.push(edges[&idx]);
         }
         result.reverse();
 
-        return Some(result.to_vec());
+        Some(result.to_vec())
     }
 }

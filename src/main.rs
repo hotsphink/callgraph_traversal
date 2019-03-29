@@ -41,7 +41,7 @@ lazy_static! {
 }
 
 fn resolve(cg : &Callgraph, query : &str) -> ResolveResult {
-    return match cg.resolve(query) {
+    match cg.resolve(query) {
         None => ResolveResult::None,
         Some(matches) =>
             if matches.len() == 1 { ResolveResult::One(matches[0]) }
@@ -50,15 +50,15 @@ fn resolve(cg : &Callgraph, query : &str) -> ResolveResult {
 }
 
 fn resolve_single(cg : &Callgraph, query : &str) -> Option<NodeIndex> {
-    return match resolve(cg, query) {
+    match resolve(cg, query) {
         ResolveResult::Many(_) => {
             println!("Multiple matches for '{}'", query);
-            return None
+            None
         },
         ResolveResult::One(idx) => Some(idx),
         ResolveResult::None => {
             println!("Unable to resolve '{}'", query);
-            return None;
+            None
         }
     }
 }
@@ -80,10 +80,10 @@ fn show_callers(cg : &Callgraph, query : &str) {
 }
 
 fn parse_command<'a>(pattern : &Regex, input : &'a str, usage : &str) -> Option<Vec<&'a str>> {
-    return match pattern.captures(input) {
+    match pattern.captures(input) {
         None => {
             println!("{}", usage);
-            return None;
+            None
         },
         Some(cap) => Some(
             (0..cap.len()).map(|x| match cap.get(x) {
@@ -96,7 +96,7 @@ fn parse_command<'a>(pattern : &Regex, input : &'a str, usage : &str) -> Option<
 
 fn process_line(line : &str, cg : &Callgraph) -> CommandResult {
     let words : Vec<_> = line.split_whitespace().collect();
-    if words.len() == 0 {
+    if words.is_empty() {
         panic!("FIXME - should repeat previous command? Maybe?");
     };
     match words[0] {
@@ -183,13 +183,13 @@ fn process_line(line : &str, cg : &Callgraph) -> CommandResult {
         }
     };
 
-    return CommandResult::Ok;
+    CommandResult::Ok
 }
 
 fn main() {
     // `()` can be used when no completer is required
     let mut rl = Editor::<()>::new();
-    if let Err(_) = rl.load_history("history.txt") {
+    if rl.load_history("history.txt").is_err() {
         println!("No previous history.");
     }
 
@@ -198,10 +198,11 @@ fn main() {
     let infile = if args.len() >= 2 { &args[1] } else { "/home/sfink/Callgraphs/js/callgraph.txt" };
     println!("{:?}", infile);
 
-    let mut line_limit : u32 = 0;
-    if args.len() >= 3 {
-        line_limit = args[2].parse().expect("line limit should be an integer!");
-    }
+    let line_limit : u32 = if args.len() >= 3 {
+        args[2].parse().expect("line limit should be an integer!")
+    } else {
+        0
+    };
 
     let cg = load_graph(infile, line_limit).unwrap();
 

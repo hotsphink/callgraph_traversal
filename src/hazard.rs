@@ -13,12 +13,13 @@ pub fn load_graph(filename : &str, line_limit : u32) -> Result<Callgraph, Error>
     let mut reader = BufReader::new(file);
 
     fn error(message : &str) -> Result<Callgraph, Error> {
-        return Err(Error::new(ErrorKind::Other, message));
+        Err(Error::new(ErrorKind::Other, message))
     };
 
-    let mut lineno = 1;
+    let mut lineno = 0;
     let mut line = String::with_capacity(4000);
     loop {
+        line.clear();
         match reader.read_line(&mut line) {
             Ok(0) => break,
             Ok(_) => (),
@@ -27,6 +28,7 @@ pub fn load_graph(filename : &str, line_limit : u32) -> Result<Callgraph, Error>
                 return Err(e);
             }
         };
+        lineno += 1;
 
         match line.chars().nth(0) {
             Some('#') => {
@@ -57,7 +59,7 @@ pub fn load_graph(filename : &str, line_limit : u32) -> Result<Callgraph, Error>
                 if &src[0..1] == "/" {
                     src = dst;
                     dst = iter.next().expect("missing dst function id");
-                    limit = src[1..].parse().expect(format!("malformed limit {} on line {}", src, lineno).as_ref());
+                    limit = src[1..].parse().unwrap_or_else(|_| panic!("malformed limit {} on line {}", src, lineno))
                 };
                 if src == "SUPPRESS_GC" {
                     src = dst;
@@ -65,7 +67,7 @@ pub fn load_graph(filename : &str, line_limit : u32) -> Result<Callgraph, Error>
                     limit = 1;
                 };
 
-                let src : u32 = src.parse().expect(format!("malformed function id on line {}", lineno).as_ref());
+                let src : u32 = src.parse().unwrap_or_else(|_| panic!("malformed function id on line {}", lineno));
                 let dst : u32 = dst.parse().expect("malformed function id");
                 let src = NodeIndex::new(src as usize);
                 let dst = NodeIndex::new(dst as usize);
@@ -80,7 +82,7 @@ pub fn load_graph(filename : &str, line_limit : u32) -> Result<Callgraph, Error>
                         return error("Invalid format");
                     }
                 };
-                let id : usize = line[2..space].parse().expect(format!("malformed function id on line {}", lineno).as_ref());
+                let id : usize = line[2..space].parse().unwrap_or_else(|_| panic!("malformed function id on line {}", lineno));
                 cg.add_unmangled_name(id, &line[space+1..line.len()-1]);
             },
             Some('F') => {}, // Field call
@@ -91,12 +93,10 @@ pub fn load_graph(filename : &str, line_limit : u32) -> Result<Callgraph, Error>
             None => {}
         }
 
-        lineno += 1;
         if line_limit > 0 && lineno > line_limit { break; }
-        line.clear();
     };
 
     println!("Final lineno = {}", lineno);
 
-    return Ok(cg);
+    Ok(cg)
 }
