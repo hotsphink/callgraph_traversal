@@ -2,19 +2,21 @@ extern crate petgraph;
 
 pub use petgraph::graph::NodeIndex;
 
-use petgraph::stable_graph::{StableGraph, Neighbors};
+use petgraph::stable_graph::StableGraph;
 use petgraph::visit::IntoNodeReferences;
 use regex::Regex;
 use std::collections::HashMap;
 use std::collections::VecDeque;
 
+pub type PropertySet = u32;
+
 pub struct Callgraph {
     // Graph of mangled function names associated with their "limits" bit
     // vectors. NodeIndexes in this graph are also used as IDs.
-    pub graph : StableGraph<String, u32>,
+    pub graph : StableGraph<String, PropertySet>,
 
     // Graph of the reverse relation (function callers).
-    pub caller_graph : StableGraph<NodeIndex, u32>,
+    pub caller_graph : StableGraph<NodeIndex, PropertySet>,
 
     // Table mapping from stems (simple function names) to all functions with
     // that name.
@@ -51,26 +53,24 @@ impl Callgraph {
         };
         let idx = cg.graph.add_node(String::from("(dummy node zero)"));
         cg.caller_graph.add_node(idx);
+        cg.alt_names.push(Vec::new());
         cg
     }
 
     pub fn add_function(&mut self, name : &str) -> NodeIndex {
         let idx = self.graph.add_node(String::from(name));
         self.caller_graph.add_node(idx);
+        self.alt_names.push(Vec::new());
         idx
     }
 
     pub fn add_unmangled_name(&mut self, id : usize, unmangled : &str) {
         let func_stem = stem(unmangled);
         self.stem_table.entry(String::from(func_stem)).or_default().push(NodeIndex::new(id));
-        // TODO: Add to the list of names associated with an id.
-        if id >= self.alt_names.len() {
-            self.alt_names.resize(id + 1, Vec::new());
-        }
         self.alt_names[id].push(unmangled.to_string());
     }
 
-    pub fn add_edge(&mut self, src : NodeIndex, dst : NodeIndex, limit : u32) {
+    pub fn add_edge(&mut self, src : NodeIndex, dst : NodeIndex, limit : PropertySet) {
         self.graph.add_edge(src, dst, limit);
         self.caller_graph.add_edge(dst, src, limit);
     }
@@ -119,17 +119,33 @@ impl Callgraph {
         // #id match
         if &pattern[0..1] == "#" {
             return match &pattern[1..].parse::<usize>() {
-                Ok(n) => Some(vec!(NodeIndex::new(*n))),
+                Ok(n) => {
+                    if *n < self.graph.node_count() {
+                        Some(vec!(NodeIndex::new(*n)))
+                    } else {
+                        None
+                    }
+
+                },
                 Err(_) => None
             };
         }
 
-        // Substring match
-        for (idx, names) in self.alt_names.iter().enumerate() {
-            for name in names {
-                if name.find(pattern) != None {
-                    results.push(NodeIndex::new(idx));
-                    break
+        // Exact match against mangled name.
+        for (idx, func) in self.graph.node_references() {
+            if pattern == func {
+                results.push(idx);
+            }
+        }
+
+        // Substring match against unmangled names
+        if results.is_empty() {
+            for (idx, names) in self.alt_names.iter().enumerate() {
+                for name in names {
+                    if name.find(pattern) != None {
+                        results.push(NodeIndex::new(idx));
+                        break
+                    }
                 }
             }
         }
@@ -140,8 +156,8 @@ impl Callgraph {
         None
     }
 
-    pub fn callees(&self, idx : NodeIndex) -> Neighbors<u32> {
-        self.graph.neighbors(idx)
+    pub fn callees(&self, idx : NodeIndex) -> Vec<NodeIndex> {
+        self.graph.neighbors(idx).collect()
     }
 
     pub fn callers(&self, idx : NodeIndex) -> Vec<NodeIndex> {

@@ -40,8 +40,19 @@ lazy_static! {
     static ref ROUTE_RE : Regex = Regex::new(r"^route (?:from )?(.*?) (?:to )?(.*?)(?: avoiding (.*))?$").unwrap();
 }
 
-fn resolve(cg : &Callgraph, query : &str) -> ResolveResult {
-    match cg.resolve(query) {
+struct UIContext {
+    active_function : Option<NodeIndex>
+}
+
+fn resolve(cg : &Callgraph, query : &[&str], ctx : &UIContext) -> ResolveResult {
+    if query.len() == 0 {
+        return match ctx.active_function {
+            Some(idx) => ResolveResult::One(idx),
+            None => ResolveResult::None
+        };
+    }
+
+    match cg.resolve(query[0]) {
         None => ResolveResult::None,
         Some(matches) =>
             if matches.len() == 1 { ResolveResult::One(matches[0]) }
@@ -49,33 +60,37 @@ fn resolve(cg : &Callgraph, query : &str) -> ResolveResult {
     }
 }
 
-fn resolve_single(cg : &Callgraph, query : &str) -> Option<NodeIndex> {
-    match resolve(cg, query) {
+fn resolve_single(cg : &Callgraph, query : &[&str], ctx : &UIContext) -> Option<NodeIndex> {
+    match resolve(cg, query, ctx) {
         ResolveResult::Many(_) => {
-            println!("Multiple matches for '{}'", query);
+            println!("Multiple matches for '{:?}'", query);
             None
         },
         ResolveResult::One(idx) => Some(idx),
         ResolveResult::None => {
-            println!("Unable to resolve '{}'", query);
+            println!("Unable to resolve '{:?}'", query);
             None
         }
     }
 }
 
-fn show_callees(cg : &Callgraph, query : &str) {
-    if let Some(func) = resolve_single(cg, query) {
-        for idx in cg.callees(func) {
-            println!("{}", cg.name(idx, callgraph::DescriptionBrevity::Verbose));
-        }
+fn show_neighbors(cg : &Callgraph, neighbors : Vec<NodeIndex>, ctx : &mut UIContext) {
+    ctx.active_function = None;
+    ctx.active_function=if neighbors.len() == 1 { Some(neighbors[0]) } else { None };
+    for idx in neighbors {
+        println!("{}", cg.name(idx, callgraph::DescriptionBrevity::Normal));
+    }
+ }
+
+fn show_callees(cg : &Callgraph, query : &[&str], ctx : &mut UIContext) {
+    if let Some(func) = resolve_single(cg, query, ctx) {
+        show_neighbors(cg, cg.callees(func), ctx);
     }
 }
 
-fn show_callers(cg : &Callgraph, query : &str) {
-    if let Some(func) = resolve_single(cg, query) {
-        for idx in cg.callers(func) {
-            println!("{}", cg.name(idx, callgraph::DescriptionBrevity::Verbose));
-        }
+fn show_callers(cg : &Callgraph, query : &[&str], ctx : &mut UIContext) {
+    if let Some(func) = resolve_single(cg, query, ctx) {
+        show_neighbors(cg, cg.callers(func), ctx);
     }
 }
 
@@ -94,7 +109,7 @@ fn parse_command<'a>(pattern : &Regex, input : &'a str, usage : &str) -> Option<
     }
 }
 
-fn process_line(line : &str, cg : &Callgraph) -> CommandResult {
+fn process_line(line : &str, cg : &Callgraph, ctx : &mut UIContext) -> CommandResult {
     let words : Vec<_> = line.split_whitespace().collect();
     if words.is_empty() {
         panic!("FIXME - should repeat previous command? Maybe?");
@@ -116,8 +131,11 @@ fn process_line(line : &str, cg : &Callgraph) -> CommandResult {
         "resolve" => {
             match cg.resolve(&words[1]) {
                 Some(matches) => {
-                    for idx in matches {
-                        println!("{}", cg.name(idx, callgraph::DescriptionBrevity::Verbose));
+                    for idx in &matches {
+                        println!("{}", cg.name(*idx, callgraph::DescriptionBrevity::Verbose));
+                    }
+                    if matches.len() == 1 {
+                        ctx.active_function = Some(matches[0]);
                     }
                 },
                 None => {
@@ -126,16 +144,16 @@ fn process_line(line : &str, cg : &Callgraph) -> CommandResult {
             }
         },
         "callee" => {
-            show_callees(cg, &words[1]);
+            show_callees(cg, &words[1..], ctx);
         },
         "callees" => {
-            show_callees(cg, &words[1]);
+            show_callees(cg, &words[1..], ctx);
         },
         "caller" => {
-            show_callers(cg, &words[1]);
+            show_callers(cg, &words[1..], ctx);
         },
         "callers" => {
-            show_callers(cg, &words[1]);
+            show_callers(cg, &words[1..], ctx);
         },
         "route" => {
             let args_result = parse_command(
@@ -144,11 +162,11 @@ fn process_line(line : &str, cg : &Callgraph) -> CommandResult {
             if args_result == None { return CommandResult::Nothing; }
             let args = args_result.unwrap();
 
-            let src = match resolve_single(cg, args[1]) {
+            let src = match resolve_single(cg, &args[1..1], ctx) {
                 Some(res) => res,
                 None => return CommandResult::Nothing
             };
-            let dst = match resolve_single(cg, args[2]) {
+            let dst = match resolve_single(cg, &args[2..2], ctx) {
                 Some(res) => res,
                 None => return CommandResult::Nothing
             };
@@ -206,11 +224,13 @@ fn main() {
 
     let cg = load_graph(infile, line_limit).unwrap();
 
+    let mut uicontext = UIContext { active_function: None };
+
     loop {
         let readline = rl.readline(">> ");
         match readline {
             Ok(line) => {
-                match process_line(&line, &cg) {
+                match process_line(&line, &cg, &mut uicontext) {
                     CommandResult::Quit => { break; },
                     _ => {
                         rl.add_history_entry(line);

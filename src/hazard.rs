@@ -1,6 +1,6 @@
 extern crate petgraph;
 
-use callgraph::Callgraph;
+use callgraph::{Callgraph, PropertySet};
 use petgraph::graph::NodeIndex;
 use std::fs::File;
 use std::io::{BufReader, Error, ErrorKind};
@@ -15,6 +15,8 @@ pub fn load_graph(filename : &str, line_limit : u32) -> Result<Callgraph, Error>
     fn error(message : &str) -> Result<Callgraph, Error> {
         Err(Error::new(ErrorKind::Other, message))
     };
+
+    let mut indirects = Vec::<(u32, String, PropertySet)>::new();
 
     let mut lineno = 0;
     let mut line = String::with_capacity(4000);
@@ -57,9 +59,9 @@ pub fn load_graph(filename : &str, line_limit : u32) -> Result<Callgraph, Error>
                 let mut dst = iter.next().expect("missing dst function id");
                 let mut limit = 0;
                 if &src[0..1] == "/" {
+                    limit = src[1..].parse().unwrap_or_else(|_| panic!("malformed limit {} on line {}", src, lineno));
                     src = dst;
                     dst = iter.next().expect("missing dst function id");
-                    limit = src[1..].parse().unwrap_or_else(|_| panic!("malformed limit {} on line {}", src, lineno))
                 };
                 if src == "SUPPRESS_GC" {
                     src = dst;
@@ -86,7 +88,23 @@ pub fn load_graph(filename : &str, line_limit : u32) -> Result<Callgraph, Error>
                 cg.add_unmangled_name(id, &line[space+1..line.len()-1]);
             },
             Some('F') => {}, // Field call
-            Some('I') => {}, // Indirect call
+            Some('I') => { // Indirect call
+                let mut len = 2;
+                let mut iter = (&line[2..]).split_whitespace();
+                let mut src = iter.next().expect("missing src function id");
+                len += src.len();
+                let mut limit = 0;
+                if &src[0..1] == "/" {
+                    limit = src[1..].parse().unwrap_or_else(|_| panic!("malformed limit {} on line {}", src, lineno));
+                    src = iter.next().expect("missing src function id");
+                    len += 1 + src.len();
+                }
+                let dst = &line[1+len..line.len()-1];
+                let src : u32 = src.parse().unwrap_or_else(|_| panic!("malformed function id on line {}", lineno));
+                // Have to defer generating a node for the indirect function
+                // pointer, because otherwise it would change the numbering.
+                indirects.push((src, dst.to_string(), limit));
+            },
             Some('T') => {}, // Tag
             Some('V') => {}, // virtual method
             Some(_) => { panic!("Unhandled leading character at line {}", lineno) },
@@ -95,6 +113,13 @@ pub fn load_graph(filename : &str, line_limit : u32) -> Result<Callgraph, Error>
 
         if line_limit > 0 && lineno > line_limit { break; }
     };
+
+    for (src, dst_name, limit) in indirects {
+        // For now, just leave the "VARIABLE " in the beginning.
+        let dst = cg.add_function(&dst_name);
+        println!("doing {} -> {}", dst_name, dst.index());
+        cg.add_edge(NodeIndex::new(src as usize), dst, limit);
+    }
 
     println!("Final lineno = {}", lineno);
 
