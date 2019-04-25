@@ -99,9 +99,12 @@ impl Callgraph {
     }
 
     pub fn resolve(&self, pattern : &str) -> Option<Vec<NodeIndex>> {
+        // Look for exact match with stem.
         if let Some(matches) = self.stem_table.get(pattern) {
             return Some(matches.to_vec());
         }
+
+        // Regex match if pattern is /.../
         let mut results = Vec::<NodeIndex>::new();
         if &pattern[0..1] == "/" && &pattern[pattern.len()-1..] == "/" {
             let matcher = Regex::new(&pattern[1..pattern.len()-2]).unwrap();
@@ -112,17 +115,25 @@ impl Callgraph {
             }
             return Some(results);
         }
+
+        // #id match
         if &pattern[0..1] == "#" {
             return match &pattern[1..].parse::<usize>() {
                 Ok(n) => Some(vec!(NodeIndex::new(*n))),
                 Err(_) => None
             };
         }
-        for (idx, func) in self.graph.node_references() {
-            if func.find(pattern) != None {
-                results.push(idx);
+
+        // Substring match
+        for (idx, names) in self.alt_names.iter().enumerate() {
+            for name in names {
+                if name.find(pattern) != None {
+                    results.push(NodeIndex::new(idx));
+                    break
+                }
             }
         }
+
         if ! results.is_empty() {
             return Some(results);
         }
