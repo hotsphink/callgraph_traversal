@@ -1,12 +1,6 @@
-// TODO:
-// [x] cmd line arg to specify callgraph file
-// [x] make it compile
-// [x] split into library
-// [x] remove the index -> int map
-// [ ] LookupResult or something - single, multiple, none
-
 mod callgraph;
 use callgraph::Callgraph;
+use callgraph::Matcher;
 
 mod hazard;
 use hazard::load_graph;
@@ -22,7 +16,10 @@ use petgraph::graph::NodeIndex;
 use regex::Regex;
 use rustyline::error::ReadlineError;
 use rustyline::Editor;
+use std::collections::HashSet;
 use std::env;
+use std::iter::FromIterator;
+use std::mem;
 
 enum CommandResult {
     Ok,
@@ -41,7 +38,9 @@ lazy_static! {
 }
 
 struct UIContext {
-    active_function : Option<NodeIndex>
+    last_command : String,
+    active_function : Option<NodeIndex>,
+    active_functions : Option<Vec<NodeIndex>>,
 }
 
 fn resolve(cg : &Callgraph, query : &[&str], ctx : &UIContext) -> ResolveResult {
@@ -60,36 +59,47 @@ fn resolve(cg : &Callgraph, query : &[&str], ctx : &UIContext) -> ResolveResult 
     }
 }
 
-fn resolve_single(cg : &Callgraph, query : &[&str], ctx : &UIContext) -> Option<NodeIndex> {
+fn resolve_single(cg : &Callgraph, query : &[&str], ctx : &UIContext, purpose : &str) -> Option<NodeIndex> {
     match resolve(cg, query, ctx) {
         ResolveResult::Many(_) => {
-            println!("Multiple matches for '{:?}'", query);
+            println!("Multiple matches for {} '{:?}'", purpose, query);
             None
         },
         ResolveResult::One(idx) => Some(idx),
         ResolveResult::None => {
-            println!("Unable to resolve '{:?}'", query);
+            println!("Unable to resolve {} '{:?}'", purpose, query);
             None
         }
     }
 }
 
 fn show_neighbors(cg : &Callgraph, neighbors : Vec<NodeIndex>, ctx : &mut UIContext) {
-    ctx.active_function = None;
-    ctx.active_function=if neighbors.len() == 1 { Some(neighbors[0]) } else { None };
-    for idx in neighbors {
-        println!("{}", cg.name(idx, callgraph::DescriptionBrevity::Normal));
+    // If we have a single result, use that as the new "active function". If
+    // there are no results, keep the previous value. If there are multiple
+    // results, clear out the active function.
+    match neighbors.len() {
+        0 => (),
+        1 => ctx.active_function = Some(neighbors[0]),
+        _ => ctx.active_function = None
+    }
+    for idx in &neighbors {
+        println!("{}", cg.name(*idx, callgraph::DescriptionBrevity::Normal));
+    }
+    if neighbors.len() > 0 {
+        ctx.active_functions = Some(neighbors);
     }
  }
 
 fn show_callees(cg : &Callgraph, query : &[&str], ctx : &mut UIContext) {
-    if let Some(func) = resolve_single(cg, query, ctx) {
+    if let Some(func) = resolve_single(cg, query, ctx, "function") {
+        ctx.active_function = Some(func);
         show_neighbors(cg, cg.callees(func), ctx);
     }
 }
 
 fn show_callers(cg : &Callgraph, query : &[&str], ctx : &mut UIContext) {
-    if let Some(func) = resolve_single(cg, query, ctx) {
+    if let Some(func) = resolve_single(cg, query, ctx, "function") {
+        ctx.active_function = Some(func);
         show_neighbors(cg, cg.callers(func), ctx);
     }
 }
@@ -110,10 +120,9 @@ fn parse_command<'a>(pattern : &Regex, input : &'a str, usage : &str) -> Option<
 }
 
 fn process_line(line : &str, cg : &Callgraph, ctx : &mut UIContext) -> CommandResult {
+    let last_command = ctx.last_command.clone();
+    let line = if line.is_empty() { last_command.as_ref() } else { line };
     let words : Vec<_> = line.split_whitespace().collect();
-    if words.is_empty() {
-        panic!("FIXME - should repeat previous command? Maybe?");
-    };
     match words[0] {
         "help" => {
             println!("Yes, you do need help");
@@ -136,6 +145,9 @@ fn process_line(line : &str, cg : &Callgraph, ctx : &mut UIContext) -> CommandRe
                     }
                     if matches.len() == 1 {
                         ctx.active_function = Some(matches[0]);
+                    }
+                    if matches.len() > 0 {
+                        ctx.active_functions = Some(matches);
                     }
                 },
                 None => {
@@ -162,15 +174,21 @@ fn process_line(line : &str, cg : &Callgraph, ctx : &mut UIContext) -> CommandRe
             if args_result == None { return CommandResult::Nothing; }
             let args = args_result.unwrap();
 
-            let src = match resolve_single(cg, &args[1..1], ctx) {
+            let src = match resolve_single(cg, &args[1..2], ctx, "source") {
                 Some(res) => res,
                 None => return CommandResult::Nothing
             };
-            let dst = match resolve_single(cg, &args[2..2], ctx) {
+            let dst = match resolve_single(cg, &args[2..3], ctx, "destination") {
                 Some(res) => res,
                 None => return CommandResult::Nothing
             };
-            match cg.any_route(src, dst, [].to_vec()) {
+            let idxes : Vec<_> = if args[3].len() == 0 {
+                vec![]
+            } else {
+                args[3].split(", ").map(|s| resolve_single(cg, &[s], ctx, "avoided function").unwrap()).collect()
+            };
+            let avoid : HashSet<NodeIndex> = HashSet::from_iter(idxes);
+            match cg.any_route(src, dst, avoid) {
                 Some(route) => {
                     println!("length {} route found:", route.len());
                     for idx in route {
@@ -181,6 +199,29 @@ fn process_line(line : &str, cg : &Callgraph, ctx : &mut UIContext) -> CommandRe
                     println!("No route found");
                 }
             }
+        },
+        "filter" => {
+            let (negate, filter) = if &words[1][0..1] == "!" {
+                (true, Matcher::new(&words[1][1..]))
+            } else {
+                (false, Matcher::new(words[1].as_ref()))
+            };
+            if let None = filter {
+                println!("Invalid filter");
+                return CommandResult::Nothing;
+            }
+            let filter = filter.unwrap();
+            if ctx.active_functions == None {
+                println!("No functions are active");
+                return CommandResult::Nothing;
+            }
+            // FIXME: There must be a better way to go about this.
+            let mut orig = mem::replace(&mut ctx.active_functions, Some(vec![])).unwrap();
+            orig.retain(|idx| { negate != filter.matches(cg, *idx) });
+            for idx in &orig {
+                println!("{}", cg.name(*idx, callgraph::DescriptionBrevity::Normal));
+            }
+            mem::replace(&mut ctx.active_functions, Some(orig));
         },
         other => {
             if &words[0][0..1] == "#" {
@@ -200,6 +241,8 @@ fn process_line(line : &str, cg : &Callgraph, ctx : &mut UIContext) -> CommandRe
             }
         }
     };
+
+    ctx.last_command = line.to_string();
 
     CommandResult::Ok
 }
@@ -224,7 +267,11 @@ fn main() {
 
     let cg = load_graph(infile, line_limit).unwrap();
 
-    let mut uicontext = UIContext { active_function: None };
+    let mut uicontext = UIContext {
+        last_command: String::new(),
+        active_function: None,
+        active_functions: None,
+    };
 
     loop {
         let readline = rl.readline(">> ");

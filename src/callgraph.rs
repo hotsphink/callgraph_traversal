@@ -6,6 +6,7 @@ use petgraph::stable_graph::StableGraph;
 use petgraph::visit::IntoNodeReferences;
 use regex::Regex;
 use std::collections::HashMap;
+use std::collections::HashSet;
 use std::collections::VecDeque;
 
 pub type PropertySet = u32;
@@ -29,7 +30,7 @@ pub struct Callgraph {
 pub enum DescriptionBrevity {
     Brief,
     Normal,
-    Verbose
+    Verbose,
 }
 
 lazy_static! {
@@ -40,6 +41,44 @@ fn stem(raw : &str) -> &str {
     match STEM_RE.captures(raw) {
         Some(m) => m.get(1).unwrap().as_str(),
         None => raw
+    }
+}
+
+pub enum Matcher<'a> {
+    Substring(&'a str),
+    Pattern(Regex),
+}
+
+impl<'a> Matcher<'a> {
+    pub fn new(pattern : &str) -> Option<Matcher> {
+        if &pattern[0..1] == "/" && &pattern[pattern.len()-1..] == "/" {
+            let pattern = &pattern[1..pattern.len()-1];
+            if let Ok(matcher) = Regex::new(pattern) {
+                Some(Matcher::Pattern(matcher))
+            } else {
+                None
+            }
+        } else {
+            Some(Matcher::Substring(pattern))
+        }
+    }
+
+    pub fn matches(&self, cg : &Callgraph, idx : NodeIndex) -> bool {
+        for name in cg.names(idx) {
+            match self {
+                Matcher::Substring(sub) => {
+                    if name.find(sub) != None {
+                        return true;
+                    }
+                },
+                Matcher::Pattern(re) => {
+                    if re.is_match(name) {
+                        return true;
+                    }
+                }
+            }
+        }
+        return false;
     }
 }
 
@@ -75,6 +114,15 @@ impl Callgraph {
         self.caller_graph.add_edge(dst, src, limit);
     }
 
+    pub fn names(&self, idx : NodeIndex) -> Vec<&str> {
+        let mut result = Vec::<&str>::new();
+        result.push(&self.graph[idx]);
+        for name in &self.alt_names[idx.index()] {
+            result.push(name);
+        }
+        return result;
+    }
+
     pub fn name(&self, idx : NodeIndex, brevity : DescriptionBrevity) -> String {
         match brevity {
             DescriptionBrevity::Brief => self.graph[idx].to_string(),
@@ -99,6 +147,10 @@ impl Callgraph {
     }
 
     pub fn resolve(&self, pattern : &str) -> Option<Vec<NodeIndex>> {
+        if pattern.len() == 0 {
+            return None;
+        }
+
         // Look for exact match with stem.
         if let Some(matches) = self.stem_table.get(pattern) {
             return Some(matches.to_vec());
@@ -107,11 +159,24 @@ impl Callgraph {
         // Regex match if pattern is /.../
         let mut results = Vec::<NodeIndex>::new();
         if &pattern[0..1] == "/" && &pattern[pattern.len()-1..] == "/" {
-            let matcher = Regex::new(&pattern[1..pattern.len()-2]).unwrap();
-            for (idx, func) in self.graph.node_references() {
-                if matcher.is_match(func) && idx.index() != 0 {
-                    results.push(idx);
+            let pattern = &pattern[1..pattern.len()-1];
+            if let Ok(matcher) = Regex::new(pattern) {
+                for (idx, mangled) in self.graph.node_references() {
+                    if idx.index() == 0 { continue };
+                    if matcher.is_match(mangled) {
+                        results.push(idx);
+                    } else {
+                        for unmangled in &self.alt_names[idx.index()] {
+                            if matcher.is_match(unmangled) {
+                                results.push(idx);
+                                break;
+                            }
+                        }
+                    }
                 }
+            } else {
+                println!("invalid regex: /{}/", pattern);
+                return None
             }
             return Some(results);
         }
@@ -164,7 +229,7 @@ impl Callgraph {
         self.caller_graph.neighbors(idx).collect()
     }
 
-    pub fn any_route(&self, origin : NodeIndex, goal : NodeIndex, _avoid : Vec<NodeIndex>) -> Option<Vec<NodeIndex>> {
+    pub fn any_route(&self, origin : NodeIndex, goal : NodeIndex, avoid : HashSet<NodeIndex>) -> Option<Vec<NodeIndex>> {
         let mut edges : HashMap<NodeIndex, NodeIndex> = HashMap::new();
         let mut work : VecDeque<NodeIndex> = VecDeque::new();
         work.push_back(origin);
@@ -177,6 +242,7 @@ impl Callgraph {
             let src = work.pop_front().unwrap();
             for dst in self.graph.neighbors(src) {
                 if edges.contains_key(&dst) { continue; }
+                if avoid.contains(&dst) { continue; }
                 edges.insert(dst, src);
                 if dst == goal {
                     break;
@@ -192,7 +258,6 @@ impl Callgraph {
         let mut result = vec![goal];
         while result.last().unwrap() != &origin {
             let idx = *result.last().unwrap();
-            //result.push(*edges.get(&idx).unwrap());
             result.push(edges[&idx]);
         }
         result.reverse();

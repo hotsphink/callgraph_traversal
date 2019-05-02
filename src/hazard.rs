@@ -2,6 +2,8 @@ extern crate petgraph;
 
 use callgraph::{Callgraph, PropertySet};
 use petgraph::graph::NodeIndex;
+use std::collections::hash_map::Entry;
+use std::collections::HashMap;
 use std::fs::File;
 use std::io::{BufReader, Error, ErrorKind};
 use std::io::prelude::*;
@@ -114,12 +116,23 @@ pub fn load_graph(filename : &str, line_limit : u32) -> Result<Callgraph, Error>
         if line_limit > 0 && lineno > line_limit { break; }
     };
 
-    for (src, dst_name, limit) in indirects {
+    let mut seen = HashMap::<(&str,PropertySet),NodeIndex>::new();
+    for (src, dst_name, limit) in &indirects {
         // For now, just leave the "VARIABLE " in the beginning.
-        let dst = cg.add_function(&dst_name);
-        println!("doing {} -> {}", dst_name, dst.index());
-        cg.add_edge(NodeIndex::new(src as usize), dst, limit);
+        let key = (dst_name.as_ref(), *limit);
+        let dst = match seen.entry(key) {
+            Entry::Occupied(ent) => {
+                *ent.get()
+            },
+            Entry::Vacant(ent) => {
+                let dst = cg.add_function(&dst_name);
+                ent.insert(dst);
+                dst
+            }
+        };
+        cg.add_edge(NodeIndex::new(*src as usize), dst, *limit);
     }
+    println!("{} indirects, {} distinct", indirects.len(), seen.len());
 
     println!("Final lineno = {}", lineno);
 
