@@ -217,7 +217,7 @@ fn process_line(line : &str, cg : &Callgraph, ctx : &mut UIContext) -> CommandRe
             }
             // FIXME: There must be a better way to go about this.
             let mut orig = mem::replace(&mut ctx.active_functions, Some(vec![])).unwrap();
-            orig.retain(|idx| { negate != filter.matches(cg, *idx) });
+            orig.retain(|idx| { negate != filter.is_match(cg, *idx) });
             for idx in &orig {
                 println!("{}", cg.name(*idx, callgraph::DescriptionBrevity::Normal));
             }

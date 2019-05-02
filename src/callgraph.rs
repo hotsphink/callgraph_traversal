@@ -63,7 +63,7 @@ impl<'a> Matcher<'a> {
         }
     }
 
-    pub fn matches(&self, cg : &Callgraph, idx : NodeIndex) -> bool {
+    pub fn is_match(&self, cg : &Callgraph, idx : NodeIndex) -> bool {
         for name in cg.names(idx) {
             match self {
                 Matcher::Substring(sub) => {
