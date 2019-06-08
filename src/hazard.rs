@@ -1,6 +1,6 @@
-extern crate petgraph;
+pub mod callgraph;
 
-use callgraph::{Callgraph, PropertySet};
+use crate::hazard::callgraph::{Callgraph, PropertySet};
 use petgraph::graph::NodeIndex;
 use std::collections::hash_map::Entry;
 use std::collections::HashMap;
@@ -11,7 +11,7 @@ use std::io::prelude::*;
 pub fn load_graph(filename : &str, line_limit : u32) -> Result<Callgraph, Error> {
     let mut cg = Callgraph::new();
 
-    let file = try!(File::open(filename));
+    let file = File::open(filename)?;
     let mut reader = BufReader::new(file);
 
     fn error(message : &str) -> Result<Callgraph, Error> {

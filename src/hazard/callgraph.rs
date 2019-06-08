@@ -229,33 +229,35 @@ impl Callgraph {
         self.caller_graph.neighbors(idx).collect()
     }
 
-    pub fn any_route(&self, origin : NodeIndex, goal : NodeIndex, avoid : HashSet<NodeIndex>) -> Option<Vec<NodeIndex>> {
-        let mut edges : HashMap<NodeIndex, NodeIndex> = HashMap::new();
-        let mut work : VecDeque<NodeIndex> = VecDeque::new();
+    pub fn any_route(&self, origin : NodeIndex, goal : HashSet<NodeIndex>, avoid : HashSet<NodeIndex>) -> Option<Vec<NodeIndex>> {
+        let mut edges = HashMap::new();
+        let mut work = VecDeque::new();
         work.push_back(origin);
 
-        if origin == goal {
+        if goal.contains(&origin) {
             return Some(vec![origin]);
         }
 
-        while ! work.is_empty() {
+        let mut found : Option<NodeIndex> = None;
+        'search: while ! work.is_empty() {
             let src = work.pop_front().unwrap();
             for dst in self.graph.neighbors(src) {
                 if edges.contains_key(&dst) { continue; }
                 if avoid.contains(&dst) { continue; }
                 edges.insert(dst, src);
-                if dst == goal {
-                    break;
+                if goal.contains(&dst) {
+                    found = Some(dst);
+                    break 'search;
                 }
                 work.push_back(dst);
             }
         }
 
-        if ! edges.contains_key(&goal) {
+        if found == None {
             return None;
         }
 
-        let mut result = vec![goal];
+        let mut result = vec![found.unwrap()];
         while result.last().unwrap() != &origin {
             let idx = *result.last().unwrap();
             result.push(edges[&idx]);

@@ -2,9 +2,24 @@
 name = "callgraph_traversal"
 version = "0.1.0"
 authors = ["Steve Fink <sphink@gmail.com>"]
+edition = '2018'
 
 [dependencies]
 petgraph = "*"
 regex = "*"
 rustyline = "*"
 lazy_static = "*"
+
+[dependencies.cpython]
+version = "*"
+default-features = false
+# features = ["extension-module"]
+features = ["python27-sys", "extension-module-2-7"]
+
+[lib]
+name = "hazgraph"
+crate-type = ["cdylib"]
+
+[[bin]]
+name = "cgtraverse"
+path = "src/main.rs"

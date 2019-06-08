@@ -1,9 +1,7 @@
-mod callgraph;
-use callgraph::Callgraph;
-use callgraph::Matcher;
-
 mod hazard;
 use hazard::load_graph;
+
+use hazard::callgraph::{Callgraph, Matcher, DescriptionBrevity};
 
 extern crate petgraph;
 extern crate regex;
@@ -19,7 +17,6 @@ use rustyline::Editor;
 use std::collections::HashSet;
 use std::env;
 use std::iter::FromIterator;
-use std::mem;
 
 enum CommandResult {
     Ok,
@@ -59,6 +56,17 @@ fn resolve(cg : &Callgraph, query : &[&str], ctx : &UIContext) -> ResolveResult 
     }
 }
 
+fn resolve_multi(cg : &Callgraph, query : &[&str], ctx : &UIContext, purpose : &str) -> Option<Vec<NodeIndex>> {
+    match resolve(cg, query, ctx) {
+        ResolveResult::Many(v) => Some(v),
+        ResolveResult::One(idx) => Some(vec![idx]),
+        ResolveResult::None => {
+            println!("Unable to resolve {} '{:?}'", purpose, query);
+            None
+        }
+    }
+}
+
 fn resolve_single(cg : &Callgraph, query : &[&str], ctx : &UIContext, purpose : &str) -> Option<NodeIndex> {
     match resolve(cg, query, ctx) {
         ResolveResult::Many(_) => {
@@ -83,7 +91,7 @@ fn show_neighbors(cg : &Callgraph, neighbors : Vec<NodeIndex>, ctx : &mut UICont
         _ => ctx.active_function = None
     }
     for idx in &neighbors {
-        println!("{}", cg.name(*idx, callgraph::DescriptionBrevity::Normal));
+        println!("{}", cg.name(*idx, DescriptionBrevity::Normal));
     }
     if neighbors.len() > 0 {
         ctx.active_functions = Some(neighbors);
@@ -141,7 +149,7 @@ fn process_line(line : &str, cg : &Callgraph, ctx : &mut UIContext) -> CommandRe
             match cg.resolve(&words[1]) {
                 Some(matches) => {
                     for idx in &matches {
-                        println!("{}", cg.name(*idx, callgraph::DescriptionBrevity::Verbose));
+                        println!("{}", cg.name(*idx, DescriptionBrevity::Verbose));
                     }
                     if matches.len() == 1 {
                         ctx.active_function = Some(matches[0]);
@@ -178,21 +186,34 @@ fn process_line(line : &str, cg : &Callgraph, ctx : &mut UIContext) -> CommandRe
                 Some(res) => res,
                 None => return CommandResult::Nothing
             };
-            let dst = match resolve_single(cg, &args[2..3], ctx, "destination") {
-                Some(res) => res,
-                None => return CommandResult::Nothing
+            let dst = match resolve_multi(cg, &args[2..3], ctx, "destination") {
+                None => { return CommandResult::Nothing },
+                Some(res) => HashSet::<NodeIndex>::from_iter(res)
             };
             let idxes : Vec<_> = if args[3].len() == 0 {
                 vec![]
             } else {
-                args[3].split(", ").map(|s| resolve_single(cg, &[s], ctx, "avoided function").unwrap()).collect()
+                let mut idxes = vec![];
+                for s in args[3].split(", ") {
+                    match resolve_multi(cg, &[s], ctx, "avoided function") {
+                        None => return CommandResult::Nothing,
+                        Some(v) => {
+                            idxes.extend(v);
+                        }
+                    }
+                }
+                idxes
             };
             let avoid : HashSet<NodeIndex> = HashSet::from_iter(idxes);
             match cg.any_route(src, dst, avoid) {
                 Some(route) => {
                     println!("length {} route found:", route.len());
+                    let len = route.len();
                     for idx in route {
-                        println!("{}", cg.name(idx, callgraph::DescriptionBrevity::Normal));
+                        println!("{}", cg.name(idx, DescriptionBrevity::Normal));
+                    }
+                    if len > 10 {
+                        println!("end length {} route", len);
                     }
                 },
                 None => {
@@ -206,22 +227,21 @@ fn process_line(line : &str, cg : &Callgraph, ctx : &mut UIContext) -> CommandRe
             } else {
                 (false, Matcher::new(words[1].as_ref()))
             };
-            if let None = filter {
+            if filter.is_none() {
                 println!("Invalid filter");
                 return CommandResult::Nothing;
             }
+            let _myformat = "https://example.com/?query={mangled}";
             let filter = filter.unwrap();
-            if ctx.active_functions == None {
+            if let Some(active) = &mut ctx.active_functions {
+                active.retain(|idx| filter.is_match(cg, *idx) != negate);
+                for idx in active {
+                    println!("{}", cg.name(*idx, DescriptionBrevity::Normal));
+                }
+            } else {
                 println!("No functions are active");
                 return CommandResult::Nothing;
             }
-            // FIXME: There must be a better way to go about this.
-            let mut orig = mem::replace(&mut ctx.active_functions, Some(vec![])).unwrap();
-            orig.retain(|idx| { negate != filter.is_match(cg, *idx) });
-            for idx in &orig {
-                println!("{}", cg.name(*idx, callgraph::DescriptionBrevity::Normal));
-            }
-            mem::replace(&mut ctx.active_functions, Some(orig));
         },
         other => {
             if &words[0][0..1] == "#" {
