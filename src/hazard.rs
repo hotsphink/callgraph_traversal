@@ -1,6 +1,4 @@
-pub mod callgraph;
-
-use crate::hazard::callgraph::{Callgraph, PropertySet};
+use crate::callgraph::{Callgraph, PropertySet};
 use petgraph::graph::NodeIndex;
 use std::collections::hash_map::Entry;
 use std::collections::HashMap;

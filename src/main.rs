@@ -1,11 +1,8 @@
 mod hazard;
 use hazard::load_graph;
 
-use hazard::callgraph::{Callgraph, Matcher, DescriptionBrevity};
-
-extern crate petgraph;
-extern crate regex;
-extern crate rustyline;
+mod callgraph;
+use callgraph::{Callgraph, Matcher, DescriptionBrevity};
 
 #[macro_use]
 extern crate lazy_static;
@@ -163,16 +160,10 @@ fn process_line(line : &str, cg : &Callgraph, ctx : &mut UIContext) -> CommandRe
                 }
             }
         },
-        "callee" => {
+        "callee" | "callees" => {
             show_callees(cg, &words[1..], ctx);
         },
-        "callees" => {
-            show_callees(cg, &words[1..], ctx);
-        },
-        "caller" => {
-            show_callers(cg, &words[1..], ctx);
-        },
-        "callers" => {
+        "caller" | "callers" => {
             show_callers(cg, &words[1..], ctx);
         },
         "route" => {

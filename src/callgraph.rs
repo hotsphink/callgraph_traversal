@@ -26,7 +26,7 @@ pub struct Callgraph {
 }
 
 pub enum DescriptionBrevity {
-    Brief,
+    _Brief,
     Normal,
     Verbose,
 }
@@ -123,7 +123,7 @@ impl Callgraph {
 
     pub fn name(&self, idx : NodeIndex, brevity : DescriptionBrevity) -> String {
         match brevity {
-            DescriptionBrevity::Brief => self.graph[idx].to_string(),
+            DescriptionBrevity::_Brief => self.graph[idx].to_string(),
 
             DescriptionBrevity::Normal => {
                 let alt = &self.alt_names[idx.index()];

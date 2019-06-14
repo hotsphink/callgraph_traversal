@@ -1,24 +1,23 @@
 [package]
-name = "callgraph_traversal"
+name = "sfink_exp_callgraph_traversal"
 version = "0.1.0"
 authors = ["Steve Fink <sphink@gmail.com>"]
 edition = '2018'
 
 [dependencies]
-petgraph = "*"
-regex = "*"
-rustyline = "*"
-lazy_static = "*"
+petgraph = "0.4"
+regex = "1.1"
+rustyline = "4.0"
+lazy_static = "1.3"
 
 [dependencies.cpython]
-version = "*"
+version = "0.1"
 default-features = false
-# features = ["extension-module"]
 features = ["python27-sys", "extension-module-2-7"]
 
 [lib]
 name = "hazgraph"
-crate-type = ["cdylib"]
+crate-type = ["cdylib", "rlib"]
 
 [[bin]]
 name = "cgtraverse"
