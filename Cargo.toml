@@ -1,8 +1,11 @@
 [package]
-name = "sfink_exp_callgraph_traversal"
+name = "sfink_callgraph_traversal"
 version = "0.1.0"
 authors = ["Steve Fink <sphink@gmail.com>"]
 edition = '2018'
+description = "Experimental callgraph traversal/analysis tool, currently limited to loading an internal format produced by a static analysis"
+keywords = ["callgraph"]
+maintenance = { "status" = "experimental" }
 
 [dependencies]
 petgraph = "0.4"
