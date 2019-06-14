@@ -3,3 +3,4 @@ target
 *.so
 Cargo.lock
 src/junk.rs
+history.txt
