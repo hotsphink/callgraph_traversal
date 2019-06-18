@@ -78,7 +78,7 @@ fn resolve_single(cg : &Callgraph, query : &[&str], ctx : &UIContext, purpose : 
     }
 }
 
-fn show_neighbors(cg : &Callgraph, neighbors : Vec<NodeIndex>, ctx : &mut UIContext) {
+fn show_neighbors(cg : &Callgraph, neighbors : &[NodeIndex], ctx : &mut UIContext) {
     // If we have a single result, use that as the new "active function". If
     // there are no results, keep the previous value. If there are multiple
     // results, clear out the active function.
@@ -87,25 +87,25 @@ fn show_neighbors(cg : &Callgraph, neighbors : Vec<NodeIndex>, ctx : &mut UICont
         1 => ctx.active_function = Some(neighbors[0]),
         _ => ctx.active_function = None
     }
-    for idx in &neighbors {
+    for idx in neighbors {
         println!("{}", cg.name(*idx, DescriptionBrevity::Normal));
     }
     if neighbors.len() > 0 {
-        ctx.active_functions = Some(neighbors);
+        ctx.active_functions = Some(neighbors.to_vec());
     }
  }
 
 fn show_callees(cg : &Callgraph, query : &[&str], ctx : &mut UIContext) {
     if let Some(func) = resolve_single(cg, query, ctx, "function") {
         ctx.active_function = Some(func);
-        show_neighbors(cg, cg.callees(func), ctx);
+        show_neighbors(cg, &cg.callees(func), ctx);
     }
 }
 
 fn show_callers(cg : &Callgraph, query : &[&str], ctx : &mut UIContext) {
     if let Some(func) = resolve_single(cg, query, ctx, "function") {
         ctx.active_function = Some(func);
-        show_neighbors(cg, cg.callers(func), ctx);
+        show_neighbors(cg, &cg.callers(func), ctx);
     }
 }
 
