@@ -3,9 +3,11 @@ pub use petgraph::graph::NodeIndex;
 use petgraph::stable_graph::StableGraph;
 use petgraph::visit::IntoNodeReferences;
 use regex::Regex;
-use std::collections::HashMap;
-use std::collections::HashSet;
-use std::collections::VecDeque;
+use std::collections::{
+    HashMap,
+    HashSet,
+    VecDeque
+};
 
 pub type PropertySet = u32;
 
@@ -13,6 +15,8 @@ pub struct Callgraph {
     // Graph of mangled function names associated with their "limits" bit
     // vectors. NodeIndexes in this graph are also used as IDs.
     pub graph : StableGraph<String, PropertySet>,
+
+    pub roots : Option<HashSet<NodeIndex>>,
 
     // Graph of the reverse relation (function callers).
     pub caller_graph : StableGraph<NodeIndex, PropertySet>,
@@ -84,6 +88,7 @@ impl Callgraph {
     pub fn new() -> Callgraph {
         let mut cg = Callgraph {
             graph: StableGraph::new(),
+	    roots: None,
             caller_graph: StableGraph::new(),
             stem_table: HashMap::new(),
             alt_names: Vec::new(),
@@ -232,10 +237,6 @@ impl Callgraph {
         let mut work = VecDeque::new();
         work.push_back(origin);
 
-        if goal.contains(&origin) {
-            return Some(vec![origin]);
-        }
-
         let mut found : Option<NodeIndex> = None;
         'search: while ! work.is_empty() {
             let src = work.pop_front().unwrap();
@@ -256,12 +257,47 @@ impl Callgraph {
         }
 
         let mut result = vec![found.unwrap()];
-        while result.last().unwrap() != &origin {
+        while result.last().unwrap() != &origin || result.len() == 1 {
             let idx = *result.last().unwrap();
             result.push(edges[&idx]);
         }
         result.reverse();
 
         Some(result.to_vec())
+    }
+
+    pub fn roots(&mut self) -> Vec<NodeIndex> {
+        if self.roots == None {
+	    return self.roots.unwrap().iter().map(|&x| x).collect();
+        }
+	self.roots = Some(HashSet::new());
+
+	let mut gen : usize = 0;
+        let mut seen = HashMap::<NodeIndex, usize>::new();
+	for node in self.graph.node_indices() {
+            gen += 1;
+	    let mut work = vec![node];
+	    while work.len() > 0 {
+                let idx = work.pop().unwrap();
+		match seen.get(&idx) {
+ 		    None => seen.insert(idx, gen),
+		    Some(g) => {
+		        if *g == gen {
+			    self.roots.unwrap().insert(idx);
+                        };
+			break;
+                    }
+                };
+		let mut found = false;
+		for caller in self.caller_graph.neighbors(idx) {
+		    found = true;
+		    work.push(caller);
+                };
+		if !found {
+		    self.roots.unwrap().insert(idx);
+                }
+            }
+        }
+	return self.roots.unwrap().iter().map(|&x| x).collect();
     }
 }

@@ -1,6 +1,6 @@
 import hazgraph
 
-cg = hazgraph.HazGraph("/home/sfink/Callgraphs/js/callgraph.txt")
+cg = hazgraph.HazGraph("/home/sfink/callgraph.txt")
 
 collects = cg.resolve("collect")
 print("collects = {}".format(collects))
