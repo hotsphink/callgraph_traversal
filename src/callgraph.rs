@@ -9,7 +9,15 @@ use std::collections::{
     VecDeque
 };
 
-pub type PropertySet = u32;
+#[derive(Eq, PartialEq, Ord, PartialOrd, Hash, Copy, Clone, Debug)]
+pub struct PropertySet {
+    pub all : u32,
+    pub any : u32
+}
+
+// impl Eq for PropertySet {
+
+// }
 
 pub struct Callgraph {
     // Graph of mangled function names associated with their "limits" bit
@@ -17,6 +25,10 @@ pub struct Callgraph {
     pub graph : StableGraph<String, PropertySet>,
 
     pub roots : Option<HashSet<NodeIndex>>,
+    pub sinks : Option<HashSet<NodeIndex>>,
+
+    root : NodeIndex,
+    sink : NodeIndex,
 
     // Graph of the reverse relation (function callers).
     pub caller_graph : StableGraph<NodeIndex, PropertySet>,
@@ -80,7 +92,7 @@ impl<'a> Matcher<'a> {
                 }
             }
         }
-        return false;
+        false
     }
 }
 
@@ -89,6 +101,9 @@ impl Callgraph {
         let mut cg = Callgraph {
             graph: StableGraph::new(),
 	    roots: None,
+	    sinks: None,
+            root: NodeIndex::new(0),
+            sink: NodeIndex::new(0),
             caller_graph: StableGraph::new(),
             stem_table: HashMap::new(),
             alt_names: Vec::new(),
@@ -123,7 +138,7 @@ impl Callgraph {
         for name in &self.alt_names[idx.index()] {
             result.push(name);
         }
-        return result;
+        result
     }
 
     pub fn name(&self, idx : NodeIndex, brevity : DescriptionBrevity) -> String {
@@ -142,7 +157,7 @@ impl Callgraph {
             DescriptionBrevity::Verbose => {
                 let mut s = format!("#{} = {}", idx.index(), self.graph[idx]);
                 for unmangled in &self.alt_names[idx.index()] {
-                    s += &("\n  ".to_owned() + &unmangled);
+                    s += &("\n  ".to_owned() + unmangled);
                 }
                 s
             },
@@ -150,7 +165,7 @@ impl Callgraph {
     }
 
     pub fn resolve(&self, pattern : &str) -> Option<Vec<NodeIndex>> {
-        if pattern.len() == 0 {
+        if pattern.is_empty() {
             return None;
         }
 
@@ -225,14 +240,44 @@ impl Callgraph {
     }
 
     pub fn callees(&self, idx : NodeIndex) -> Vec<NodeIndex> {
-        self.graph.neighbors(idx).collect()
+        self.graph.neighbors(idx).filter(|n| *n != self.sink).collect()
     }
 
     pub fn callers(&self, idx : NodeIndex) -> Vec<NodeIndex> {
-        self.caller_graph.neighbors(idx).collect()
+        self.caller_graph.neighbors(idx).filter(|n| *n != self.root).collect()
     }
 
-    pub fn any_route(&self, origin : NodeIndex, goal : HashSet<NodeIndex>, avoid : HashSet<NodeIndex>) -> Option<Vec<NodeIndex>> {
+    // FIXME: If there are many origins (eg AddRef), then this could do a large
+    // traversal N times. Sample: `route from AddRef to (GC) avoiding #2`.
+    pub fn any_route_from_one_of(
+        &self,
+        origins : &[NodeIndex],
+        goal : &HashSet<NodeIndex>,
+        avoid : &HashSet<NodeIndex>) -> Option<Vec<NodeIndex>>
+    {
+        let mut bestpath : Option<Vec<NodeIndex>> = None;
+        for origin in origins {
+            if avoid.contains(origin) { continue; }
+            if let Some(path) = self.any_route(*origin, goal, avoid) {
+                if let Some(prev) = bestpath.as_ref() {
+                    if prev.len() > path.len() {
+                        bestpath = Some(path);
+                    }
+                } else {
+                    bestpath = Some(path);
+                }
+            }
+        }
+
+        bestpath
+    }
+
+    pub fn any_route(
+        &self,
+        origin : NodeIndex,
+        goal : &HashSet<NodeIndex>,
+        avoid : &HashSet<NodeIndex>) -> Option<Vec<NodeIndex>>
+    {
         let mut edges = HashMap::new();
         let mut work = VecDeque::new();
         work.push_back(origin);
@@ -266,38 +311,82 @@ impl Callgraph {
         Some(result.to_vec())
     }
 
-    pub fn roots(&mut self) -> Vec<NodeIndex> {
-        if self.roots == None {
-	    return self.roots.unwrap().iter().map(|&x| x).collect();
-        }
-	self.roots = Some(HashSet::new());
+    fn compute_roots<T,U>(graph : &StableGraph<T, U>, root_idx : NodeIndex) -> HashSet<NodeIndex> {
+	let mut roots = HashSet::new();
 
 	let mut gen : usize = 0;
         let mut seen = HashMap::<NodeIndex, usize>::new();
-	for node in self.graph.node_indices() {
+	for node in graph.node_indices() {
+            if node == root_idx {
+                continue;
+            }
             gen += 1;
 	    let mut work = vec![node];
-	    while work.len() > 0 {
-                let idx = work.pop().unwrap();
-		match seen.get(&idx) {
- 		    None => seen.insert(idx, gen),
-		    Some(g) => {
-		        if *g == gen {
-			    self.roots.unwrap().insert(idx);
-                        };
-			break;
+	    while !work.is_empty() {
+                let id = work.pop().unwrap();
+                if let Some(when) = seen.get(&id) {
+		    if *when == gen {
+                        // Seen in the same generation -- we found a cycle.
+                        // Randomly pick this node as the root.
+			roots.insert(id);
+                        // And stop the traversal, since otherwise we might
+                        // pick multiple roots in this generation and they'd
+                        // all be part of the same cycle.
+                        break;
+                    } else {
+                        // We found a path to an older generation, so this node
+                        // is reachable by that older generation's root.
+                        continue;
                     }
-                };
-		let mut found = false;
-		for caller in self.caller_graph.neighbors(idx) {
-		    found = true;
+                }
+
+ 		seen.insert(id, gen);
+		let mut any_callers = false;
+		for caller in graph.neighbors(id) {
+		    any_callers = true;
 		    work.push(caller);
-                };
-		if !found {
-		    self.roots.unwrap().insert(idx);
+                }
+		if !any_callers {
+		    roots.insert(id);
                 }
             }
         }
-	return self.roots.unwrap().iter().map(|&x| x).collect();
+	roots
+    }
+
+    pub fn roots(&mut self) -> Vec<NodeIndex> {
+        if let Some(roots) = &self.roots {
+	    return roots.iter().map(|&x| x).collect();
+        }
+
+        self.root = self.add_function("<root>");
+
+        let roots = Callgraph::compute_roots(&self.caller_graph, self.root);
+        let result = roots.iter().map(|&x| x).collect();
+        self.roots = Some(roots);
+
+        for root in self.roots() {
+            self.add_edge(self.root, root, PropertySet { all: 0, any: 0 });
+        }
+
+        result
+    }
+
+    pub fn sinks(&mut self) -> Vec<NodeIndex> {
+        if let Some(sinks) = &self.sinks {
+	    return sinks.iter().map(|&x| x).collect();
+        }
+
+        self.sink = self.add_function("<sink>");
+
+        let sinks = Callgraph::compute_roots(&self.graph, self.sink);
+        let result = sinks.iter().map(|&x| x).collect();
+        self.sinks = Some(sinks);
+
+        for sink in self.sinks() {
+            self.add_edge(sink, self.sink, PropertySet { all: 0, any: 0 });
+        }
+
+        result
     }
 }

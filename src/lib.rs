@@ -71,7 +71,7 @@ py_class!(class HazGraph |py| {
         let avoid : Vec<NodeIndex> = avoid.iter().map(|&x| NodeIndex::new(x)).collect();
         let avoid = HashSet::from_iter(avoid);
 
-        match cg.any_route(src, goal, avoid) {
+        match cg.any_route(src, &goal, &avoid) {
             None => Ok(vec![]),
             Some(route) => Ok(route.iter().map(|&x| x.index()).collect())
         }

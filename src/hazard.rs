@@ -14,7 +14,7 @@ pub fn load_graph(filename : &str, line_limit : u32) -> Result<Callgraph, Error>
 
     fn error(message : &str) -> Result<Callgraph, Error> {
         Err(Error::new(ErrorKind::Other, message))
-    };
+    }
 
     let mut indirects = Vec::<(u32, String, PropertySet)>::new();
 
@@ -32,7 +32,7 @@ pub fn load_graph(filename : &str, line_limit : u32) -> Result<Callgraph, Error>
         };
         lineno += 1;
 
-        match line.chars().nth(0) {
+        match line.chars().next() {
             Some('#') => {
                 let space = match line.find(' ') {
                     Some(pos) => pos,
@@ -57,16 +57,23 @@ pub fn load_graph(filename : &str, line_limit : u32) -> Result<Callgraph, Error>
                 let mut iter = (&line[2..]).split_whitespace();
                 let mut src = iter.next().expect("missing src function id");
                 let mut dst = iter.next().expect("missing dst function id");
-                let mut limit = 0;
-                if &src[0..1] == "/" {
-                    limit = src[1..].parse().unwrap_or_else(|_| panic!("malformed limit {} on line {}", src, lineno));
+                let mut limit = PropertySet { all: 0, any: 0 };
+                if let Some(colon) = src.find(':') {
+                    let all : u32 = src[0..colon].parse().unwrap_or_else(|_| panic!("malformed 'all:any' {} on line {}", src, lineno));
+                    let any : u32 = src[colon+1..].parse().unwrap_or_else(|_| panic!("malformed 'all:any' {} on line {}", src, lineno));
+                    limit = PropertySet { all, any };
+                    src = dst;
+                    dst = iter.next().expect("missing dst function id");
+                } else if &src[0..1] == "/" {
+                    let bits : u32 = src[1..].parse().unwrap_or_else(|_| panic!("malformed limit {} on line {}", src, lineno));
+                    limit = PropertySet { all: bits, any: bits };
                     src = dst;
                     dst = iter.next().expect("missing dst function id");
                 };
                 if src == "SUPPRESS_GC" {
                     src = dst;
                     dst = iter.next().expect("missing dst function id");
-                    limit = 1;
+                    limit = PropertySet { all: 1, any: 1 };
                 };
 
                 let src : u32 = src.parse().unwrap_or_else(|_| panic!("malformed function id on line {}", lineno));
@@ -103,7 +110,7 @@ pub fn load_graph(filename : &str, line_limit : u32) -> Result<Callgraph, Error>
                 let src : u32 = src.parse().unwrap_or_else(|_| panic!("malformed function id on line {}", lineno));
                 // Have to defer generating a node for the indirect function
                 // pointer, because otherwise it would change the numbering.
-                indirects.push((src, dst.to_string(), limit));
+                indirects.push((src, dst.to_string(), PropertySet { all: limit, any: limit }));
             },
             Some('T') => {}, // Tag
             Some('V') => {}, // virtual method
@@ -123,7 +130,7 @@ pub fn load_graph(filename : &str, line_limit : u32) -> Result<Callgraph, Error>
                 *ent.get()
             },
             Entry::Vacant(ent) => {
-                let dst = cg.add_function(&dst_name);
+                let dst = cg.add_function(dst_name);
                 ent.insert(dst);
                 dst
             }
@@ -131,6 +138,12 @@ pub fn load_graph(filename : &str, line_limit : u32) -> Result<Callgraph, Error>
         cg.add_edge(NodeIndex::new(*src as usize), dst, *limit);
     }
     println!("{} indirects, {} distinct", indirects.len(), seen.len());
+
+    let roots = &cg.roots();
+    println!("found {} roots", roots.len());
+
+    let sinks = &cg.sinks();
+    println!("found {} sinks", sinks.len());
 
     println!("Final lineno = {}", lineno);
 

@@ -38,7 +38,7 @@ struct UIContext {
 }
 
 fn resolve(cg : &Callgraph, query : &[&str], ctx : &UIContext) -> ResolveResult {
-    if query.len() == 0 {
+    if query.is_empty() {
         return match ctx.active_function {
             Some(idx) => ResolveResult::One(idx),
             None => ResolveResult::None
@@ -53,8 +53,8 @@ fn resolve(cg : &Callgraph, query : &[&str], ctx : &UIContext) -> ResolveResult 
     }
 }
 
-fn resolve_multi(cg : &Callgraph, query : &[&str], ctx : &UIContext, purpose : &str) -> Option<Vec<NodeIndex>> {
-    match resolve(cg, query, ctx) {
+fn resolve_multi(cg : &Callgraph, query : &str, ctx : &UIContext, purpose : &str) -> Option<Vec<NodeIndex>> {
+    match resolve(cg, &[query], ctx) {
         ResolveResult::Many(v) => Some(v),
         ResolveResult::One(idx) => Some(vec![idx]),
         ResolveResult::None => {
@@ -64,8 +64,16 @@ fn resolve_multi(cg : &Callgraph, query : &[&str], ctx : &UIContext, purpose : &
     }
 }
 
-fn resolve_single(cg : &Callgraph, query : &[&str], ctx : &UIContext, purpose : &str) -> Option<NodeIndex> {
-    match resolve(cg, query, ctx) {
+fn resolve_single(cg : &Callgraph,
+                  query : Option<&str>,
+                  ctx : &UIContext,
+                  purpose : &str) -> Option<NodeIndex>
+{
+    if query == None {
+        return ctx.active_function;
+    }
+
+    match resolve(cg, &[&query.unwrap()], ctx) {
         ResolveResult::Many(_) => {
             println!("Multiple matches for {} '{:?}'", purpose, query);
             None
@@ -95,14 +103,14 @@ fn show_neighbors(cg : &Callgraph, neighbors : &[NodeIndex], ctx : &mut UIContex
     }
  }
 
-fn show_callees(cg : &Callgraph, query : &[&str], ctx : &mut UIContext) {
+fn show_callees(cg : &Callgraph, query : Option<&str>, ctx : &mut UIContext) {
     if let Some(func) = resolve_single(cg, query, ctx, "function") {
         ctx.active_function = Some(func);
         show_neighbors(cg, &cg.callees(func), ctx);
     }
 }
 
-fn show_callers(cg : &Callgraph, query : &[&str], ctx : &mut UIContext) {
+fn show_callers(cg : &Callgraph, query : Option<&str>, ctx : &mut UIContext) {
     if let Some(func) = resolve_single(cg, query, ctx, "function") {
         ctx.active_function = Some(func);
         show_neighbors(cg, &cg.callers(func), ctx);
@@ -121,6 +129,40 @@ fn parse_command<'a>(pattern : &Regex, input : &'a str, usage : &str) -> Option<
                 Some(m) => m.as_str()
             }).collect()
         )
+    }
+}
+
+fn resolve_list(cg : &Callgraph, query : &str, ctx : &UIContext, purpose : &str) -> Vec<NodeIndex> {
+    if query.len() == 0 {
+        return vec![];
+    }
+
+    // Ugh... allow either "A and B" or "A or B". Maybe the caller should pass
+    // this in. Or make I should use " ; ".
+    let mut idxes = vec![];
+    for part in query.split(" and ") {
+        for s in part.split(" or ") {
+            if let Some(v) = resolve_multi(cg, s, ctx, purpose) {
+                idxes.extend(v);
+            }
+        }
+    }
+
+    idxes
+}
+
+fn print_route(cg : &Callgraph, maybe_route : Option<Vec<NodeIndex>>) {
+    if let Some(route) = maybe_route {
+        println!("length {} route found:", route.len());
+        let len = route.len();
+        for idx in route {
+            println!("{}", cg.name(idx, DescriptionBrevity::Normal));
+        }
+        if len > 10 {
+            println!("end length {} route", len);
+        }
+    } else {
+        println!("No route found");
     }
 }
 
@@ -143,7 +185,7 @@ fn process_line(line : &str, cg : &Callgraph, ctx : &mut UIContext) -> CommandRe
             println!("{:?}", cg.stem_table);
         },
         "resolve" => {
-            match cg.resolve(&words[1]) {
+            match cg.resolve(words[1]) {
                 Some(matches) => {
                     for idx in &matches {
                         println!("{}", cg.name(*idx, DescriptionBrevity::Verbose));
@@ -161,62 +203,42 @@ fn process_line(line : &str, cg : &Callgraph, ctx : &mut UIContext) -> CommandRe
             }
         },
         "callee" | "callees" => {
-            show_callees(cg, &words[1..], ctx);
+            if words.len() > 1 {
+                show_callees(cg, Some(&line[words[0].len()+1..]), ctx);
+            } else {
+                show_callees(cg, None, ctx);
+            }
         },
         "caller" | "callers" => {
-            show_callers(cg, &words[1..], ctx);
+            if words.len() > 1 {
+                show_callers(cg, Some(&line[words[0].len()+1..]), ctx);
+            } else {
+                show_callers(cg, None, ctx);
+            }
         },
         "route" => {
             let args_result = parse_command(
                 &ROUTE_RE, line,
-                "Invalid syntax. Usage: route from <func1> to <func2> avoiding <func>, <func>, <func>");
+                "Invalid syntax. Usage: route from <func1> to <func2> avoiding <func> and <func> and <func>");
             if args_result == None { return CommandResult::Nothing; }
             let args = args_result.unwrap();
 
-            let src = match resolve_single(cg, &args[1..2], ctx, "source") {
+            let src = match resolve_multi(cg, args[1], ctx, "source") {
+                None => return CommandResult::Nothing,
                 Some(res) => res,
-                None => return CommandResult::Nothing
             };
-            let dst = match resolve_multi(cg, &args[2..3], ctx, "destination") {
-                None => { return CommandResult::Nothing },
+            let dst = match resolve_multi(cg, args[2], ctx, "destination") {
+                None => return CommandResult::Nothing,
                 Some(res) => HashSet::<NodeIndex>::from_iter(res)
             };
-            let idxes : Vec<_> = if args[3].len() == 0 {
-                vec![]
-            } else {
-                let mut idxes = vec![];
-                for s in args[3].split(", ") {
-                    match resolve_multi(cg, &[s], ctx, "avoided function") {
-                        None => return CommandResult::Nothing,
-                        Some(v) => {
-                            idxes.extend(v);
-                        }
-                    }
-                }
-                idxes
-            };
-            let avoid : HashSet<NodeIndex> = HashSet::from_iter(idxes);
-            match cg.any_route(src, dst, avoid) {
-                Some(route) => {
-                    println!("length {} route found:", route.len());
-                    let len = route.len();
-                    for idx in route {
-                        println!("{}", cg.name(idx, DescriptionBrevity::Normal));
-                    }
-                    if len > 10 {
-                        println!("end length {} route", len);
-                    }
-                },
-                None => {
-                    println!("No route found");
-                }
-            }
+            let avoid = HashSet::from_iter(resolve_list(cg, args[3], ctx, "avoided function"));
+            print_route(cg, cg.any_route_from_one_of(&src, &dst, &avoid));
         },
         "filter" => {
             let (negate, filter) = if &words[1][0..1] == "!" {
                 (true, Matcher::new(&words[1][1..]))
             } else {
-                (false, Matcher::new(words[1].as_ref()))
+                (false, Matcher::new(words[1]))
             };
             if filter.is_none() {
                 println!("Invalid filter");
