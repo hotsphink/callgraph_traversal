@@ -1,7 +1,7 @@
-pub use petgraph::graph::NodeIndex;
+pub use petgraph::graph::{NodeIndex, EdgeIndex};
 
 use petgraph::stable_graph::StableGraph;
-use petgraph::visit::IntoNodeReferences;
+use petgraph::visit::{EdgeRef, IntoNodeReferences};
 use regex::Regex;
 use std::collections::{
     HashMap,
@@ -39,6 +39,9 @@ pub struct Callgraph {
 
     // Map from IDs to all the known unmangled names of a function.
     pub alt_names : Vec<Vec<String>>,
+
+    // Bits to descriptions of properties.
+    pub property_names : HashMap<u32, String>,
 }
 
 pub enum DescriptionBrevity {
@@ -107,10 +110,13 @@ impl Callgraph {
             caller_graph: StableGraph::new(),
             stem_table: HashMap::new(),
             alt_names: Vec::new(),
+            property_names: HashMap::new(),
         };
         let idx = cg.graph.add_node(String::from("(dummy node zero)"));
         cg.caller_graph.add_node(idx);
         cg.alt_names.push(Vec::new());
+        cg.property_names.insert(1, "GC_SUPPRESSED".to_string());
+        cg.property_names.insert(8, "NONRELEASING".to_string());
         cg
     }
 
@@ -161,6 +167,30 @@ impl Callgraph {
                 }
                 s
             },
+        }
+    }
+
+    pub fn describe_property_set(&self, propset : u32) -> String {
+        let mut s = self.property_names.iter().map(
+            |(bit, desc)| if (propset & bit) != 0 { Some(desc) } else { None }
+        ).into_iter().flatten().fold(String::new(), |mut a, b| {
+            a.reserve(b.len() + 1);
+            a.push_str(b);
+            a.push_str(",");
+            a
+        }).to_string();
+        s.pop();
+        s
+    }
+    
+    pub fn describe_edge(&self, idx : EdgeIndex, brevity : DescriptionBrevity) -> String {
+        let target = self.graph.edge_endpoints(idx).unwrap().1;
+        let node_str = self.name(target, brevity);
+        let (any, all) = (self.graph[idx].any, self.graph[idx].all);
+        match any {
+            0 => node_str,
+            all => node_str + " [" + &self.describe_property_set(any) + "]",
+            _ => node_str + " [" + &self.describe_property_set(any) + ":" + &self.describe_property_set(all) + "]",
         }
     }
 
@@ -243,8 +273,22 @@ impl Callgraph {
         self.graph.neighbors(idx).filter(|n| *n != self.sink).collect()
     }
 
+    pub fn callee_edges(&self, idx : NodeIndex) -> Vec<EdgeIndex> {
+        self.graph.edges(idx).
+            filter(|e| e.target() != self.sink).
+            map(|e| e.id()).
+            collect()
+    }
+
     pub fn callers(&self, idx : NodeIndex) -> Vec<NodeIndex> {
         self.caller_graph.neighbors(idx).filter(|n| *n != self.root).collect()
+    }
+
+    pub fn caller_edges(&self, idx : NodeIndex) -> Vec<EdgeIndex> {
+        self.caller_graph.edges(idx).
+            filter(|e| e.target() != self.root).
+            map(|e| e.id()).
+            collect()
     }
 
     // FIXME: If there are many origins (eg AddRef), then this could do a large

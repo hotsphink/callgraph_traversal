@@ -7,7 +7,7 @@ use callgraph::{Callgraph, Matcher, DescriptionBrevity};
 #[macro_use]
 extern crate lazy_static;
 
-use petgraph::graph::NodeIndex;
+use petgraph::graph::{NodeIndex, EdgeIndex};
 use regex::Regex;
 use rustyline::error::ReadlineError;
 use rustyline::Editor;
@@ -103,10 +103,29 @@ fn show_neighbors(cg : &Callgraph, neighbors : &[NodeIndex], ctx : &mut UIContex
     }
  }
 
+fn show_edges(cg : &Callgraph, neighbors : &[EdgeIndex], ctx : &mut UIContext) {
+    // If we have a single result, use that as the new "active function". If
+    // there are no results, keep the previous value. If there are multiple
+    // results, clear out the active function.
+    match neighbors.len() {
+        0 => (),
+        1 => ctx.active_function = Some(cg.graph.edge_endpoints(neighbors[0]).unwrap().1),
+        _ => ctx.active_function = None
+    }
+    for e in neighbors {
+        println!("{}", cg.describe_edge(*e, DescriptionBrevity::Normal));
+    }
+    if neighbors.len() > 0 {
+        ctx.active_functions = Some(
+            neighbors.iter().map(|e| cg.graph.edge_endpoints(*e).unwrap().1).collect()
+        );
+    }
+ }
+
 fn show_callees(cg : &Callgraph, query : Option<&str>, ctx : &mut UIContext) {
     if let Some(func) = resolve_single(cg, query, ctx, "function") {
         ctx.active_function = Some(func);
-        show_neighbors(cg, &cg.callees(func), ctx);
+        show_edges(cg, &cg.callee_edges(func), ctx);
     }
 }
 
