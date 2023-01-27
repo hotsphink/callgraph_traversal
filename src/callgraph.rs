@@ -185,7 +185,7 @@ impl Callgraph {
         let (any, all) = (self.graph[idx].any, self.graph[idx].all);
         match any {
             0 => node_str,
-            all => node_str + " [" + &self.describe_property_set(any) + "]",
+            x if x == all => node_str + " [" + &self.describe_property_set(any) + "]",
             _ => node_str + " [" + &self.describe_property_set(any) + ":" + &self.describe_property_set(all) + "]",
         }
     }
