@@ -170,12 +170,16 @@ fn resolve_list(cg : &Callgraph, query : &str, ctx : &UIContext, purpose : &str)
     idxes
 }
 
-fn print_route(cg : &Callgraph, maybe_route : Option<Vec<NodeIndex>>) {
+fn print_route(cg : &Callgraph, maybe_route : Option<Vec<EdgeIndex>>) {
     if let Some(route) = maybe_route {
         println!("length {} route found:", route.len());
         let len = route.len();
+        if len > 0 {
+            let origin = route[0];
+            println!("{}", cg.name(cg.graph.edge_endpoints(origin).unwrap().0, DescriptionBrevity::Normal));
+        }
         for idx in route {
-            println!("{}", cg.name(idx, DescriptionBrevity::Normal));
+            println!("{}", cg.describe_edge(idx, DescriptionBrevity::Normal));
         }
         if len > 10 {
             println!("end length {} route", len);

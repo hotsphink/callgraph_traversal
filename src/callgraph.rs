@@ -1,6 +1,10 @@
-pub use petgraph::graph::{NodeIndex, EdgeIndex};
+pub use petgraph::graph::{
+    Graph,
+    NodeIndex,
+    EdgeIndex,
+    EdgeReference
+};
 
-use petgraph::stable_graph::StableGraph;
 use petgraph::visit::{EdgeRef, IntoNodeReferences};
 use regex::Regex;
 use std::collections::{
@@ -167,6 +171,7 @@ impl Callgraph {
     }
 
     pub fn describe_property_set(&self, propset : u32) -> String {
+        // Someday I'll find somebody to teach me Rust.
         let mut s = self.property_names.iter().map(
             |(bit, desc)| if (propset & bit) != 0 { Some(desc) } else { None }
         ).into_iter().flatten().fold(String::new(), |mut a, b| {
@@ -293,9 +298,9 @@ impl Callgraph {
         &self,
         origins : &[NodeIndex],
         goal : &HashSet<NodeIndex>,
-        avoid : &HashSet<NodeIndex>) -> Option<Vec<NodeIndex>>
+        avoid : &HashSet<NodeIndex>) -> Option<Vec<EdgeIndex>>
     {
-        let mut bestpath : Option<Vec<NodeIndex>> = None;
+        let mut bestpath : Option<Vec<EdgeIndex>> = None;
         for origin in origins {
             if avoid.contains(origin) { continue; }
             if let Some(path) = self.any_route(*origin, goal, avoid) {
@@ -316,21 +321,23 @@ impl Callgraph {
         &self,
         origin : NodeIndex,
         goal : &HashSet<NodeIndex>,
-        avoid : &HashSet<NodeIndex>) -> Option<Vec<NodeIndex>>
+        avoid : &HashSet<NodeIndex>) -> Option<Vec<EdgeIndex>>
     {
-        let mut edges = HashMap::new();
+        // Map from node to the edge that led to that node.
+        let mut edges : HashMap<NodeIndex, EdgeReference<PropertySet>> = HashMap::new();
         let mut work = VecDeque::new();
         work.push_back(origin);
 
-        let mut found : Option<NodeIndex> = None;
+        let mut found : Option<EdgeReference<PropertySet>> = None;
         'search: while ! work.is_empty() {
             let src = work.pop_front().unwrap();
-            for dst in self.graph.neighbors(src) {
+            for edge in self.graph.edges(src) {
+                let dst = edge.target();
                 if edges.contains_key(&dst) { continue; }
                 if avoid.contains(&dst) { continue; }
-                edges.insert(dst, src);
+                edges.insert(dst, edge);
                 if goal.contains(&dst) {
-                    found = Some(dst);
+                    found = Some(edge);
                     break 'search;
                 }
                 work.push_back(dst);
@@ -341,14 +348,18 @@ impl Callgraph {
             return None;
         }
 
-        let mut result = vec![found.unwrap()];
-        while result.last().unwrap() != &origin || result.len() == 1 {
-            let idx = *result.last().unwrap();
-            result.push(edges[&idx]);
+        let mut path = vec![found.unwrap()];
+        while path.last().unwrap().source() != origin {
+            let next = path.last().unwrap();
+            path.push(edges[&next.source()]);
         }
-        result.reverse();
 
-        Some(result.to_vec())
+        let mut result : Vec<EdgeIndex> = vec![];
+        while let Some(edge) = path.pop() {
+            result.push(edge.id());
+        }
+
+        Some(result)
     }
 
     fn compute_roots<T,U>(graph : &Graph<T, U>, root_idx : NodeIndex) -> HashSet<NodeIndex> {
