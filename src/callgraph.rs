@@ -15,14 +15,10 @@ pub struct PropertySet {
     pub any : u32
 }
 
-// impl Eq for PropertySet {
-
-// }
-
 pub struct Callgraph {
     // Graph of mangled function names associated with their "limits" bit
     // vectors. NodeIndexes in this graph are also used as IDs.
-    pub graph : StableGraph<String, PropertySet>,
+    pub graph : Graph<String, PropertySet>,
 
     pub roots : Option<HashSet<NodeIndex>>,
     pub sinks : Option<HashSet<NodeIndex>>,
@@ -31,7 +27,7 @@ pub struct Callgraph {
     sink : NodeIndex,
 
     // Graph of the reverse relation (function callers).
-    pub caller_graph : StableGraph<NodeIndex, PropertySet>,
+    pub caller_graph : Graph<NodeIndex, PropertySet>,
 
     // Table mapping from stems (simple function names) to all functions with
     // that name.
@@ -102,12 +98,12 @@ impl<'a> Matcher<'a> {
 impl Callgraph {
     pub fn new() -> Callgraph {
         let mut cg = Callgraph {
-            graph: StableGraph::new(),
+            graph: Graph::new(),
 	    roots: None,
 	    sinks: None,
             root: NodeIndex::new(0),
             sink: NodeIndex::new(0),
-            caller_graph: StableGraph::new(),
+            caller_graph: Graph::new(),
             stem_table: HashMap::new(),
             alt_names: Vec::new(),
             property_names: HashMap::new(),
@@ -355,7 +351,7 @@ impl Callgraph {
         Some(result.to_vec())
     }
 
-    fn compute_roots<T,U>(graph : &StableGraph<T, U>, root_idx : NodeIndex) -> HashSet<NodeIndex> {
+    fn compute_roots<T,U>(graph : &Graph<T, U>, root_idx : NodeIndex) -> HashSet<NodeIndex> {
 	let mut roots = HashSet::new();
 
 	let mut gen : usize = 0;
