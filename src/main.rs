@@ -378,14 +378,20 @@ fn main() {
 
     let args: Vec<String> = env::args().collect();
 
-    let infile = if args.len() >= 2 { &args[1] } else { "/home/sfink/Callgraphs/js/callgraph.txt" };
-    println!("{:?}", infile);
-
-    let line_limit : u32 = if args.len() >= 3 {
-        args[2].parse().expect("line limit should be an integer!")
-    } else {
-        0
+    let (infile, line_limit) = match &args[..] {
+        [_] => {
+            println!("Missing callgraph filename");
+            return;
+        },
+        [_, f] => (f, 0),
+        [_, f, l] => (f, l.parse().expect("line limit should be an integer!")),
+        _ => {
+            println!("Extra argument found");
+            return;
+        }
     };
+
+    println!("loading {:?}", infile);
 
     let cg = load_graph(infile, line_limit).unwrap();
 
