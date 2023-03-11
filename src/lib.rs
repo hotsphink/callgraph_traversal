@@ -63,7 +63,7 @@ py_class!(class HazGraph |py| {
         Ok(callers.iter().map(|&x| x.index()).collect())
     }
 
-    def route(&self, src: usize, goal: Vec<usize>, avoid: Vec<usize>) -> PyResult<Vec<usize>> {
+    def route(&self, src: usize, goal: Vec<usize>, avoid: Vec<usize>, avoid_props: u32) -> PyResult<Vec<usize>> {
         let cg = self.callgraph(py).borrow();
         let src = NodeIndex::new(src);
         let goal : Vec<NodeIndex> = goal.iter().map(|&x| NodeIndex::new(x)).collect();
@@ -71,7 +71,7 @@ py_class!(class HazGraph |py| {
         let avoid : Vec<NodeIndex> = avoid.iter().map(|&x| NodeIndex::new(x)).collect();
         let avoid = HashSet::from_iter(avoid);
 
-        match cg.any_route(src, &goal, &avoid) {
+        match cg.any_route(src, &goal, &avoid, avoid_props) {
             None => Ok(vec![]),
             Some(route) => Ok(route.iter().map(|&x| x.index()).collect())
         }

@@ -35,6 +35,8 @@ struct UIContext {
     last_command : String,
     active_function : Option<NodeIndex>,
     active_functions : Option<Vec<NodeIndex>>,
+    avoid_functions : Vec<NodeIndex>,
+    avoid_attributes : u32,
 }
 
 fn resolve(cg : &Callgraph, query : &[&str], ctx : &UIContext) -> ResolveResult {
@@ -151,23 +153,44 @@ fn parse_command<'a>(pattern : &Regex, input : &'a str, usage : &str) -> Option<
     }
 }
 
-fn resolve_list(cg : &Callgraph, query : &str, ctx : &UIContext, purpose : &str) -> Vec<NodeIndex> {
+fn resolve_avoid(
+    cg : &Callgraph,
+    query : &str,
+    ctx : &UIContext,
+    purpose : &str
+) -> Option<(Vec<NodeIndex>, u32)> {
     if query.len() == 0 {
-        return vec![];
+        return Some((vec![], 0));
     }
+
+    let mut attributes : u32 = 0;
 
     // Ugh... allow either "A and B" or "A or B". Maybe the caller should pass
     // this in. Or make I should use " ; ".
     let mut idxes = vec![];
     for part in query.split(" and ") {
         for s in part.split(" or ") {
-            if let Some(v) = resolve_multi(cg, s, ctx, purpose) {
+            let s = s.trim();
+            if s.chars().nth(0) == Some('[') && s.len() > 2 {
+                let s = &s[1..s.len()-1];
+                for attrname in s.split(",") {
+                    if let Some(a) = cg.resolve_property(attrname) {
+                        attributes |= a;
+                    } else {
+                        println!("unknown attribute '{}'", attrname);
+                        return None
+                    }
+                }
+            } else if let Some(v) = resolve_multi(cg, s, ctx, purpose) {
                 idxes.extend(v);
+            } else {
+                println!("unable to resolve {}", s);
+                return None
             }
         }
     }
 
-    idxes
+    Some((idxes, attributes))
 }
 
 fn print_route(cg : &Callgraph, maybe_route : Option<Vec<EdgeIndex>>) {
@@ -254,8 +277,12 @@ fn process_line(line : &str, cg : &Callgraph, ctx : &mut UIContext) -> CommandRe
                 None => return CommandResult::Nothing,
                 Some(res) => HashSet::<NodeIndex>::from_iter(res)
             };
-            let avoid = HashSet::from_iter(resolve_list(cg, args[3], ctx, "avoided function"));
-            print_route(cg, cg.any_route_from_one_of(&src, &dst, &avoid));
+            if let Some((avoid_funcs, avoid_attributes)) = resolve_avoid(cg, args[3], ctx, "avoided function") {
+                let mut avoid = HashSet::from_iter(avoid_funcs);
+                avoid.extend(&ctx.avoid_functions);
+                print_route(cg, cg.any_route_from_one_of(&src, &dst, &avoid,
+                                                         avoid_attributes | ctx.avoid_attributes));
+            }
         },
         "filter" => {
             let (negate, filter) = if &words[1][0..1] == "!" {
@@ -276,6 +303,27 @@ fn process_line(line : &str, cg : &Callgraph, ctx : &mut UIContext) -> CommandRe
                 }
             } else {
                 println!("No functions are active");
+                return CommandResult::Nothing;
+            }
+        },
+        "avoid" => {
+            let args = &line[words[0].len()..].trim();
+            if args.len() == 0 {
+                match ctx.avoid_functions.len() {
+                    0 => println!("Avoiding attributes [{}]", cg.describe_property_set(ctx.avoid_attributes)),
+                    _ => {
+                        println!("Avoiding attributes [{}] and functions:", cg.describe_property_set(ctx.avoid_attributes));
+                        for idx in &ctx.avoid_functions {
+                            println!("  {}", cg.name(*idx, DescriptionBrevity::Normal));
+                        }
+                    }
+                }
+            }
+            if let Some((avoid_functions, avoid_attributes)) = resolve_avoid(cg, args, ctx, "avoidances") {
+                ctx.avoid_functions.extend(avoid_functions);
+                ctx.avoid_attributes |= avoid_attributes;
+            } else {
+                println!("Invalid avoidance");
                 return CommandResult::Nothing;
             }
         },
@@ -327,6 +375,8 @@ fn main() {
         last_command: String::new(),
         active_function: None,
         active_functions: None,
+        avoid_functions: vec![],
+        avoid_attributes: 0,
     };
 
     loop {

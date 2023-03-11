@@ -116,7 +116,10 @@ impl Callgraph {
         cg.caller_graph.add_node(idx);
         cg.alt_names.push(Vec::new());
         cg.property_names.insert(1, "GC_SUPPRESSED".to_string());
+        cg.property_names.insert(2, "CANSCRIPT_BOUNDED".to_string());
+        cg.property_names.insert(4, "DOM_ITERATING".to_string());
         cg.property_names.insert(8, "NONRELEASING".to_string());
+        cg.property_names.insert(16, "REPLACED".to_string());
         cg
     }
 
@@ -182,6 +185,15 @@ impl Callgraph {
         }).to_string();
         s.pop();
         s
+    }
+
+    pub fn resolve_property(&self, query : &str) -> Option<u32> {
+        for (prop, name) in self.property_names.iter() {
+            if name == query {
+                return Some(*prop)
+            }
+        }
+        None
     }
     
     pub fn describe_edge(&self, idx : EdgeIndex, brevity : DescriptionBrevity) -> String {
@@ -298,12 +310,14 @@ impl Callgraph {
         &self,
         origins : &[NodeIndex],
         goal : &HashSet<NodeIndex>,
-        avoid : &HashSet<NodeIndex>) -> Option<Vec<EdgeIndex>>
+        avoid : &HashSet<NodeIndex>,
+        avoid_props : u32
+    ) -> Option<Vec<EdgeIndex>>
     {
         let mut bestpath : Option<Vec<EdgeIndex>> = None;
         for origin in origins {
             if avoid.contains(origin) { continue; }
-            if let Some(path) = self.any_route(*origin, goal, avoid) {
+            if let Some(path) = self.any_route(*origin, goal, avoid, avoid_props) {
                 if let Some(prev) = bestpath.as_ref() {
                     if prev.len() > path.len() {
                         bestpath = Some(path);
@@ -321,7 +335,9 @@ impl Callgraph {
         &self,
         origin : NodeIndex,
         goal : &HashSet<NodeIndex>,
-        avoid : &HashSet<NodeIndex>) -> Option<Vec<EdgeIndex>>
+        avoid : &HashSet<NodeIndex>,
+        avoid_props : u32
+    ) -> Option<Vec<EdgeIndex>>
     {
         // Map from node to the edge that led to that node.
         let mut edges : HashMap<NodeIndex, EdgeReference<PropertySet>> = HashMap::new();
@@ -335,6 +351,7 @@ impl Callgraph {
                 let dst = edge.target();
                 if edges.contains_key(&dst) { continue; }
                 if avoid.contains(&dst) { continue; }
+                if (avoid_props & self.graph[edge.id()].all) != 0 { continue; }
                 edges.insert(dst, edge);
                 if goal.contains(&dst) {
                     found = Some(edge);
