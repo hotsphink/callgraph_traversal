@@ -5,8 +5,32 @@ use std::collections::HashMap;
 use std::fs::File;
 use std::io::{BufReader, Error, ErrorKind};
 use std::io::prelude::*;
+use std::fmt;
 
-pub fn load_graph(filename : &str, line_limit : u32) -> Result<Callgraph, Error> {
+#[derive(Debug)]
+pub enum LoadError {
+    IOError(Error),
+    FormatError(u32, String)
+}
+
+impl std::error::Error for LoadError {}
+
+impl fmt::Display for LoadError {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match self {
+            LoadError::IOError(e) => write!(f, "I/O error: {}", e),
+            LoadError::FormatError(lineno, s) => write!(f, "Format error on line {}: {}", lineno, s)
+        }
+    }
+}
+
+impl From<Error> for LoadError {
+    fn from(e: Error) -> Self {
+        LoadError::IOError(e)
+    }
+}
+
+pub fn load_graph(filename : &str, line_limit : u32) -> Result<Callgraph, LoadError> {
     let mut cg = Callgraph::new();
 
     let file = File::open(filename)?;
@@ -22,13 +46,9 @@ pub fn load_graph(filename : &str, line_limit : u32) -> Result<Callgraph, Error>
     let mut line = String::with_capacity(4000);
     loop {
         line.clear();
-        match reader.read_line(&mut line) {
-            Ok(0) => break,
-            Ok(_) => (),
-            Err(e) => {
-                println!("Failed to read line {}: {}", lineno, e);
-                return Err(e);
-            }
+        match reader.read_line(&mut line)? {
+            0 => break,
+            _ => (),
         };
         lineno += 1;
 
@@ -36,10 +56,7 @@ pub fn load_graph(filename : &str, line_limit : u32) -> Result<Callgraph, Error>
             Some('#') => {
                 let space = match line.find(' ') {
                     Some(pos) => pos,
-                    None => {
-                        println!("Invalid format at {}: '{}'", lineno, line);
-                        return error(&format!("Invalid format on line {}", lineno));
-                    }
+                    None => return Err(LoadError::FormatError(lineno, line)),
                 };
                 let function : &str = &line[1..space];
                 match function.parse::<u32>() {
@@ -48,9 +65,7 @@ pub fn load_graph(filename : &str, line_limit : u32) -> Result<Callgraph, Error>
                         let index = cg.add_function(func);
                         assert!(num as usize == index.index());
                     },
-                    Err(e) => {
-                        return error(&format!("Invalid number at {}: {}", lineno, e));
-                    }
+                    Err(e) => return Err(LoadError::FormatError(lineno, function.to_owned())),
                 }
             },
             Some('D')|Some('R') => {
@@ -86,10 +101,7 @@ pub fn load_graph(filename : &str, line_limit : u32) -> Result<Callgraph, Error>
                 let wtf = &line[2..];
                 let space = match wtf.find(' ') {
                     Some(pos) => pos + 2,
-                    None => {
-                        println!("Invalid format at {}: '{}'", lineno, line);
-                        return error("Invalid format");
-                    }
+                    None => return Err(LoadError::FormatError(lineno, line)),
                 };
                 let id : usize = line[2..space].parse().unwrap_or_else(|_| panic!("malformed function id on line {}", lineno));
                 cg.add_unmangled_name(id, &line[space+1..line.len()-1]);
@@ -114,7 +126,7 @@ pub fn load_graph(filename : &str, line_limit : u32) -> Result<Callgraph, Error>
             },
             Some('T') => {}, // Tag
             Some('V') => {}, // virtual method
-            Some(_) => { panic!("Unhandled leading character at line {}", lineno) },
+            Some(_) => return Err(LoadError::FormatError(lineno, "Unhandled leading character".to_string())),
             None => {}
         }
 

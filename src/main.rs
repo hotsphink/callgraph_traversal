@@ -393,7 +393,13 @@ fn main() {
 
     println!("loading {:?}", infile);
 
-    let cg = load_graph(infile, line_limit).unwrap();
+    let cg = match load_graph(infile, line_limit) {
+        Ok(x) => x,
+        Err(e) => {
+            println!("failed to load graph: {}", e);
+            return;
+        }
+    };
 
     let mut uicontext = UIContext {
         last_command: String::new(),
