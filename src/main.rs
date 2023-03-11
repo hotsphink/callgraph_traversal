@@ -158,28 +158,32 @@ fn resolve_avoid(
     query : &str,
     ctx : &UIContext,
     purpose : &str
-) -> Option<(Vec<NodeIndex>, u32)> {
+) -> Option<(Vec<NodeIndex>, Option<u32>)> {
     if query.len() == 0 {
-        return Some((vec![], 0));
+        return Some((vec![], None));
     }
 
     let mut attributes : u32 = 0;
+    let mut have_attrs = false;
 
     // Ugh... allow either "A and B" or "A or B". Maybe the caller should pass
-    // this in. Or make I should use " ; ".
+    // this in. Or maybe I should use " ; ".
     let mut idxes = vec![];
     for part in query.split(" and ") {
         for s in part.split(" or ") {
             let s = s.trim();
-            if s.chars().nth(0) == Some('[') && s.len() > 2 {
+            if s.chars().nth(0) == Some('[') && s.len() >= 2 {
                 let s = &s[1..s.len()-1];
                 for attrname in s.split(",") {
-                    if let Some(a) = cg.resolve_property(attrname) {
+                    if attrname.len() == 0 {
+                        // Allow eg `avoid only []'
+                    } else if let Some(a) = cg.resolve_property(attrname) {
                         attributes |= a;
                     } else {
                         println!("unknown attribute '{}'", attrname);
                         return None
                     }
+                    have_attrs = true;
                 }
             } else if let Some(v) = resolve_multi(cg, s, ctx, purpose) {
                 idxes.extend(v);
@@ -190,7 +194,7 @@ fn resolve_avoid(
         }
     }
 
-    Some((idxes, attributes))
+    Some((idxes, if have_attrs { Some(attributes) } else { None }))
 }
 
 fn print_route(cg : &Callgraph, maybe_route : Option<Vec<EdgeIndex>>) {
@@ -281,7 +285,7 @@ fn process_line(line : &str, cg : &Callgraph, ctx : &mut UIContext) -> CommandRe
                 let mut avoid = HashSet::from_iter(avoid_funcs);
                 avoid.extend(&ctx.avoid_functions);
                 print_route(cg, cg.any_route_from_one_of(&src, &dst, &avoid,
-                                                         avoid_attributes | ctx.avoid_attributes));
+                                                         avoid_attributes.unwrap_or(0) | ctx.avoid_attributes));
             }
         },
         "filter" => {
@@ -307,7 +311,7 @@ fn process_line(line : &str, cg : &Callgraph, ctx : &mut UIContext) -> CommandRe
             }
         },
         "avoid" => {
-            let args = &line[words[0].len()..].trim();
+            let mut args = line[words[0].len()..].trim();
             if args.len() == 0 {
                 match ctx.avoid_functions.len() {
                     0 => println!("Avoiding attributes [{}]", cg.describe_property_set(ctx.avoid_attributes)),
@@ -319,9 +323,23 @@ fn process_line(line : &str, cg : &Callgraph, ctx : &mut UIContext) -> CommandRe
                     }
                 }
             }
+
+            let joined : String;
+            let only = if words.get(1) == Some(&"only") {
+                joined = words[2..].join(" ");
+                args = &joined;
+                true
+            } else { false };
+
             if let Some((avoid_functions, avoid_attributes)) = resolve_avoid(cg, args, ctx, "avoidances") {
+                if !avoid_functions.is_empty() && only {
+                    ctx.avoid_functions.clear();
+                }
                 ctx.avoid_functions.extend(avoid_functions);
-                ctx.avoid_attributes |= avoid_attributes;
+                if avoid_attributes.is_some() && only {
+                    ctx.avoid_attributes = 0;
+                }
+                ctx.avoid_attributes |= avoid_attributes.unwrap_or(0);
             } else {
                 println!("Invalid avoidance");
                 return CommandResult::Nothing;
