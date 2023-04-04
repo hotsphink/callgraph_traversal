@@ -37,6 +37,7 @@ struct UIContext {
     active_functions : Option<Vec<NodeIndex>>,
     avoid_functions : Vec<NodeIndex>,
     avoid_attributes : u32,
+    verbosity : u32,
 }
 
 fn resolve(cg : &Callgraph, query : &[&str], ctx : &UIContext) -> ResolveResult {
@@ -216,26 +217,138 @@ fn print_route(cg : &Callgraph, maybe_route : Option<Vec<EdgeIndex>>) {
     }
 }
 
+enum Command<'a> {
+    Help,
+    Quit,
+    SetVerbose(u32),
+    DumpGraph,
+    DumpStems,
+    Resolve(String),
+    Callees(Option<String>),
+    Callers(Option<String>),
+    Route(Vec<String>),
+    Filter(bool, Matcher<'a>),
+    Avoid(bool, String),
+    ListAvoids,
+    Invalid(String),
+    ResolveId(u32),
+    Unknown,
+}
+
 fn process_line(line : &str, cg : &Callgraph, ctx : &mut UIContext) -> CommandResult {
     let last_command = ctx.last_command.clone();
     let line = if line.is_empty() { last_command.as_ref() } else { line };
     let words : Vec<_> = line.split_whitespace().collect();
-    match words[0] {
-        "help" => {
+    let command = match words[0] {
+        "help" => Command::Help,
+
+        "quit" => Command::Quit,
+
+        "dump" => Command::DumpGraph,
+
+        "stems" => Command::DumpStems,
+
+        "resolve" => Command::Resolve(words[1].to_string()),
+
+        "callee" | "callees" => {
+            Command::Callees(if words.len() > 1 {
+                Some(line[words[0].len() + 1 ..].to_string())
+            } else {
+                None
+            })
+        },
+
+        "caller" | "callers" => {
+            Command::Callers(if words.len() > 1 {
+                Some(line[words[0].len() + 1 ..].to_string())
+            } else {
+                None
+            })
+        },
+
+        "route" => {
+            if let Some(args) = parse_command(
+                &ROUTE_RE, line,
+                "Invalid syntax. Usage: route from <func1> to <func2> avoiding <func> and <func> and <func>") {
+                    Command::Route(args.iter().map(|s| s.to_string()).collect())
+                } else {
+                    Command::Invalid("bad route command".to_string())
+                }
+        },
+
+        "filter" => {
+            if &words[1][0..1] == "!" {
+                if let Some(filter) = Matcher::new(&words[1][1..]) {
+                    Command::Filter(true, filter)
+                } else {
+                    Command::Invalid("invalid filter".to_string())
+                }
+            } else {
+                if let Some(filter) = Matcher::new(words[1]) {
+                    Command::Filter(false, filter)
+                } else {
+                    Command::Invalid("invalid filter".to_string())
+                }
+            }
+        },
+
+        "avoid" => {
+            let mut args = line[words[0].len()..].trim();
+
+            if args.len() > 0 {
+                let joined : String;
+                let only = if words.get(1) == Some(&"only") {
+                    joined = words[2..].join(" ");
+                    args = &joined;
+                    true
+                } else { false };
+
+                Command::Avoid(only, args.to_string())
+            } else {
+                Command::ListAvoids
+            }
+        },
+
+        "verbose" => {
+            if let Ok(n) = words[1].parse::<u32>() {
+                Command::SetVerbose(n)
+            } else {
+                Command::Invalid("Invalid verbosity level".to_string())
+            }
+        },
+
+        other => {
+            if &words[0][0..1] == "#" {
+                match other[1..].parse::<u32>() {
+                    Ok(n) => Command::ResolveId(n),
+                    Err(_) => Command::Invalid("Invalid function id".to_string())
+                }
+            } else {
+                println!("Unrecognized command '{}'", other);
+                Command::Unknown
+            }
+        },
+    };
+
+    match command {
+        Command::Help => {
             println!("Yes, you do need help");
         },
-        "quit" => {
+        Command::Quit => {
             println!("Bye bye");
             return CommandResult::Quit;
         },
-        "dump" => {
+        Command::SetVerbose(n) => {
+            ctx.verbosity = n
+        },
+        Command::DumpGraph => {
             println!("{:?}", cg.graph);
         },
-        "stems" => {
+        Command::DumpStems => {
             println!("{:?}", cg.stem_table);
         },
-        "resolve" => {
-            match cg.resolve(words[1]) {
+        Command::Resolve(pattern) => {
+            match cg.resolve(pattern.as_ref()) {
                 Some(matches) => {
                     for idx in &matches {
                         println!("{}", cg.name(*idx, DescriptionBrevity::Verbose));
@@ -252,54 +365,38 @@ fn process_line(line : &str, cg : &Callgraph, ctx : &mut UIContext) -> CommandRe
                 }
             }
         },
-        "callee" | "callees" => {
-            if words.len() > 1 {
-                show_callees(cg, Some(&line[words[0].len()+1..]), ctx);
+        Command::Callees(opt_pattern) => {
+            if let Some(pattern) = opt_pattern {
+                show_callees(cg, Some(&pattern), ctx);
             } else {
                 show_callees(cg, None, ctx);
             }
         },
-        "caller" | "callers" => {
-            if words.len() > 1 {
-                show_callers(cg, Some(&line[words[0].len()+1..]), ctx);
+        Command::Callers(opt_pattern) => {
+            if let Some(pattern) = opt_pattern {
+                show_callers(cg, Some(&pattern), ctx);
             } else {
                 show_callers(cg, None, ctx);
             }
         },
-        "route" => {
-            let args_result = parse_command(
-                &ROUTE_RE, line,
-                "Invalid syntax. Usage: route from <func1> to <func2> avoiding <func> and <func> and <func>");
-            if args_result == None { return CommandResult::Nothing; }
-            let args = args_result.unwrap();
-
-            let src = match resolve_multi(cg, args[1], ctx, "source") {
+        Command::Route(args) => {
+            let src = match resolve_multi(cg, &args[1], ctx, "source") {
                 None => return CommandResult::Nothing,
                 Some(res) => res,
             };
-            let dst = match resolve_multi(cg, args[2], ctx, "destination") {
+            let dst = match resolve_multi(cg, &args[2], ctx, "destination") {
                 None => return CommandResult::Nothing,
                 Some(res) => HashSet::<NodeIndex>::from_iter(res)
             };
-            if let Some((avoid_funcs, avoid_attributes)) = resolve_avoid(cg, args[3], ctx, "avoided function") {
+            if let Some((avoid_funcs, avoid_attributes)) = resolve_avoid(cg, &args[3], ctx, "avoided function") {
                 let mut avoid = HashSet::from_iter(avoid_funcs);
                 avoid.extend(&ctx.avoid_functions);
                 print_route(cg, cg.any_route_from_one_of(&src, &dst, &avoid,
                                                          avoid_attributes.unwrap_or(0) | ctx.avoid_attributes));
             }
         },
-        "filter" => {
-            let (negate, filter) = if &words[1][0..1] == "!" {
-                (true, Matcher::new(&words[1][1..]))
-            } else {
-                (false, Matcher::new(words[1]))
-            };
-            if filter.is_none() {
-                println!("Invalid filter");
-                return CommandResult::Nothing;
-            }
+        Command::Filter(negate, filter) => {
             let _myformat = "https://example.com/?query={mangled}";
-            let filter = filter.unwrap();
             if let Some(active) = &mut ctx.active_functions {
                 active.retain(|idx| filter.is_match(cg, *idx) != negate);
                 for idx in active {
@@ -307,31 +404,21 @@ fn process_line(line : &str, cg : &Callgraph, ctx : &mut UIContext) -> CommandRe
                 }
             } else {
                 println!("No functions are active");
-                return CommandResult::Nothing;
             }
         },
-        "avoid" => {
-            let mut args = line[words[0].len()..].trim();
-            if args.len() == 0 {
-                match ctx.avoid_functions.len() {
-                    0 => println!("Avoiding attributes [{}]", cg.describe_property_set(ctx.avoid_attributes)),
-                    _ => {
-                        println!("Avoiding attributes [{}] and functions:", cg.describe_property_set(ctx.avoid_attributes));
-                        for idx in &ctx.avoid_functions {
-                            println!("  {}", cg.name(*idx, DescriptionBrevity::Normal));
-                        }
+        Command::ListAvoids => {
+            match ctx.avoid_functions.len() {
+                0 => println!("Avoiding attributes [{}]", cg.describe_property_set(ctx.avoid_attributes)),
+                _ => {
+                    println!("Avoiding attributes [{}] and functions:", cg.describe_property_set(ctx.avoid_attributes));
+                    for idx in &ctx.avoid_functions {
+                        println!("  {}", cg.name(*idx, DescriptionBrevity::Normal));
                     }
                 }
-            }
-
-            let joined : String;
-            let only = if words.get(1) == Some(&"only") {
-                joined = words[2..].join(" ");
-                args = &joined;
-                true
-            } else { false };
-
-            if let Some((avoid_functions, avoid_attributes)) = resolve_avoid(cg, args, ctx, "avoidances") {
+            };
+        },
+        Command::Avoid(only, args) => {
+            if let Some((avoid_functions, avoid_attributes)) = resolve_avoid(cg, &args, ctx, "avoidances") {
                 if !avoid_functions.is_empty() && only {
                     ctx.avoid_functions.clear();
                 }
@@ -345,22 +432,15 @@ fn process_line(line : &str, cg : &Callgraph, ctx : &mut UIContext) -> CommandRe
                 return CommandResult::Nothing;
             }
         },
-        other => {
-            if &words[0][0..1] == "#" {
-                match other[1..].parse::<u32>() {
-                    Ok(n) => {
-                        let name = &cg.graph[NodeIndex::from(n)];
-                        println!("#{} = {}", n, name);
-                    },
-                    Err(_) => {
-                        println!("Invalid function id '{}'", other);
-                        return CommandResult::Nothing;
-                    }
-                }
-            } else {
-                println!("Unrecognized command '{}'", other);
-                return CommandResult::Nothing;
-            }
+        Command::ResolveId(n) => {
+            let name = &cg.graph[NodeIndex::from(n)];
+            println!("#{} = {}", n, name);
+        },
+        Command::Invalid(reason) => {
+            println!("{}", reason)
+        },
+        Command::Unknown => {
+            println!("Unknown command")
         }
     };
 
@@ -407,6 +487,7 @@ fn main() {
         active_functions: None,
         avoid_functions: vec![],
         avoid_attributes: 0,
+        verbosity: 0,
     };
 
     loop {
