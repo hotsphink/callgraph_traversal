@@ -115,11 +115,6 @@ impl Callgraph {
         let idx = cg.graph.add_node(String::from("(dummy node zero)"));
         cg.caller_graph.add_node(idx);
         cg.alt_names.push(Vec::new());
-        cg.property_names.insert(1, "GC_SUPPRESSED".to_string());
-        cg.property_names.insert(2, "CANSCRIPT_BOUNDED".to_string());
-        cg.property_names.insert(4, "DOM_ITERATING".to_string());
-        cg.property_names.insert(8, "NONRELEASING".to_string());
-        cg.property_names.insert(16, "REPLACED".to_string());
         cg
     }
 

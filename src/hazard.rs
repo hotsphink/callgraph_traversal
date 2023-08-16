@@ -1,4 +1,5 @@
 use crate::callgraph::{Callgraph, PropertySet};
+use json;
 use petgraph::graph::NodeIndex;
 use std::collections::hash_map::Entry;
 use std::collections::HashMap;
@@ -30,9 +31,29 @@ impl From<Error> for LoadError {
     }
 }
 
+fn parse_proptable(text : &str, lineno : u32, cg : &mut Callgraph) -> Result<(), LoadError> {
+    // There must be a more idiomatic way of doing this.
+    let json = match json::parse(text) {
+        Err(_) => return Err(LoadError::FormatError(lineno, "Bad JSON info".to_string())),
+        Ok(x) => x,
+    };
+    let proptable = match &json["Properties"] {
+        json::JsonValue::Object(x) => x,
+        _ => return Err(LoadError::FormatError(lineno, "'Properties' key required in JSON info".to_string())),
+    };
+    for (k, name) in proptable.iter() {
+        match k.parse::<u32>() {
+            Err(_) => return Err(LoadError::FormatError(lineno, "Bad property bit number".to_string())),
+            Ok(num) => {
+                cg.property_names.insert(num, name.to_string());
+            }
+        }
+    };
+    Ok(())
+}
+
 pub fn load_graph(filename : &str, line_limit : u32) -> Result<Callgraph, LoadError> {
     let mut cg = Callgraph::new();
-
     let file = File::open(filename)?;
     let mut reader = BufReader::new(file);
 
@@ -65,7 +86,7 @@ pub fn load_graph(filename : &str, line_limit : u32) -> Result<Callgraph, LoadEr
                         let index = cg.add_function(func);
                         assert!(num as usize == index.index());
                     },
-                    Err(e) => return Err(LoadError::FormatError(lineno, function.to_owned())),
+                    Err(_) => return Err(LoadError::FormatError(lineno, function.to_owned())),
                 }
             },
             Some('D')|Some('R') => {
@@ -126,6 +147,7 @@ pub fn load_graph(filename : &str, line_limit : u32) -> Result<Callgraph, LoadEr
             },
             Some('T') => {}, // Tag
             Some('V') => {}, // virtual method
+            Some('!') => parse_proptable(&line[2..], lineno, &mut cg)?,
             Some(_) => return Err(LoadError::FormatError(lineno, "Unhandled leading character".to_string())),
             None => {}
         }
